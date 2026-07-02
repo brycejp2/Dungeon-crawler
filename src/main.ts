@@ -48,7 +48,12 @@ const flow: SceneFlow = {
 };
 
 const game = new Game(ctx, audio);
-game.keyboard.attach(window);
+game.input.attach(window);
+game.input.attachPointer(visible, (clientX, clientY) => {
+  const rect = visible.getBoundingClientRect();
+  const scale = visible.width / VIEW_W;
+  return { x: (clientX - rect.left) / scale, y: (clientY - rect.top) / scale };
+});
 game.switchScene(devFloor !== undefined ? flow.newRun() : flow.title());
 game.start();
 

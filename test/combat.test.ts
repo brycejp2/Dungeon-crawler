@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { aabbOverlap, swingHitbox, knockbackVector, swingDamage } from '../src/combat';
+import {
+  aabbOverlap, swingHitbox, knockbackVector, swingDamage, resolveAimDir, castThrow,
+} from '../src/combat';
 import { SWING_REACH, SWING_WIDTH, KNOCKBACK_SPEED } from '../src/config';
 
 describe('aabbOverlap', () => {
@@ -85,6 +87,63 @@ describe('knockbackVector', () => {
     expect(Number.isFinite(kb.x)).toBe(true);
     expect(Number.isFinite(kb.y)).toBe(true);
     expect(Math.hypot(kb.x, kb.y)).toBeCloseTo(KNOCKBACK_SPEED);
+  });
+});
+
+describe('resolveAimDir', () => {
+  it('right stick takes priority over the pointer', () => {
+    const dir = resolveAimDir(true, 1, 0, true, 0, 100, 0, 0, 'down');
+    expect(dir.x).toBeCloseTo(1);
+    expect(dir.y).toBeCloseTo(0);
+  });
+
+  it('pointer aim points from origin toward the cursor', () => {
+    const dir = resolveAimDir(false, 0, 0, true, 100, 100, 100, 0, 'down');
+    expect(dir.x).toBeCloseTo(0);
+    expect(dir.y).toBeCloseTo(1);
+  });
+
+  it('normalizes stick deflection to a unit vector', () => {
+    const dir = resolveAimDir(true, 0.5, 0.5, false, 0, 0, 0, 0, 'down');
+    expect(Math.hypot(dir.x, dir.y)).toBeCloseTo(1);
+  });
+
+  it('falls back to facing with no stick or pointer', () => {
+    const dir = resolveAimDir(false, 0, 0, false, 0, 0, 0, 0, 'left');
+    expect(dir).toEqual({ x: -1, y: 0 });
+  });
+
+  it('falls back to facing when the pointer sits exactly on the origin', () => {
+    const dir = resolveAimDir(false, 0, 0, true, 50, 50, 50, 50, 'up');
+    expect(dir).toEqual({ x: 0, y: -1 });
+  });
+});
+
+describe('castThrow', () => {
+  const wallAtX48 = (tx: number): boolean => tx >= 3; // tiles 3+ are solid (x >= 48px)
+
+  it('travels the full distance in open space', () => {
+    const p = castThrow(() => false, 10, 10, 1, 0, 64);
+    expect(p.x).toBeCloseTo(74);
+    expect(p.y).toBeCloseTo(10);
+  });
+
+  it('stops before a wall', () => {
+    const p = castThrow(wallAtX48, 10, 10, 1, 0, 100);
+    expect(p.x).toBeLessThan(48);
+    expect(p.x).toBeGreaterThan(40); // lands close to the wall, not at the start
+  });
+
+  it('returns the origin when immediately blocked', () => {
+    const p = castThrow(() => true, 10, 10, 1, 0, 64);
+    expect(p).toEqual({ x: 10, y: 10 });
+  });
+
+  it('respects diagonal directions', () => {
+    const inv = 1 / Math.SQRT2;
+    const p = castThrow(() => false, 0, 0, inv, inv, 64);
+    expect(p.x).toBeCloseTo(p.y);
+    expect(Math.hypot(p.x, p.y)).toBeLessThanOrEqual(64);
   });
 });
 

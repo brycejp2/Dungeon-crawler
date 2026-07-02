@@ -394,6 +394,11 @@ function tryGenerate(seed: number, depth: number): FloorData | null {
   if (depth >= 4 && rng.chance(0.3)) placeItem('elixir');
   if (depth === 3) placeItem('sword2');
   if (depth === 6) placeItem('sword3');
+  if (depth === 2 || depth === 5) placeItem('bow'); // floor 5 is the catch-up copy
+  if (depth >= 2) {
+    const arrowBundles = rng.int(1, 2);
+    for (let i = 0; i < arrowBundles; i++) placeItem('arrows');
+  }
   const bombCount = rng.int(0, 2);
   for (let i = 0; i < bombCount; i++) placeItem('bomb');
   if (keyPos) itemSpawns.push({ item: 'key', x: keyPos.x, y: keyPos.y });

@@ -3,7 +3,7 @@
 
 import { DT, MAX_STEPS_PER_FRAME } from './config';
 import type { InputState } from './input';
-import { Keyboard } from './input';
+import { InputHub } from './input';
 import type { AudioPort } from './audio';
 
 export interface Scene {
@@ -33,7 +33,7 @@ export class Game {
   private scene: Scene | null = null;
   private accumulator = 0;
   private lastTime = 0;
-  readonly keyboard = new Keyboard();
+  readonly input = new InputHub();
 
   constructor(
     private readonly ctx: CanvasRenderingContext2D,
@@ -56,7 +56,7 @@ export class Game {
       this.lastTime = now;
       while (this.accumulator >= DT) {
         this.accumulator -= DT;
-        const input = this.keyboard.poll();
+        const input = this.input.poll();
         this.scene?.update(DT, input, this);
       }
       if (this.scene) this.scene.render(this.ctx);

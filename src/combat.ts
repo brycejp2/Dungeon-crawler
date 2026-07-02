@@ -69,3 +69,51 @@ export function swingDamage(weaponDamage: number, mutationBonus: number): number
 export function rectCenter(r: Rect): { x: number; y: number } {
   return { x: r.x + r.w / 2, y: r.y + r.h / 2 };
 }
+
+/**
+ * Resolve the aim direction for ranged attacks (bow, thrown bombs).
+ * Priority: right analog stick > mouse pointer (world coords) > facing.
+ * Always returns a unit vector.
+ */
+export function resolveAimDir(
+  hasStick: boolean, stickX: number, stickY: number,
+  hasPointer: boolean, pointerWorldX: number, pointerWorldY: number,
+  originX: number, originY: number,
+  fallback: Facing,
+): { x: number; y: number } {
+  if (hasStick) {
+    const len = Math.hypot(stickX, stickY);
+    if (len > 0.0001) return { x: stickX / len, y: stickY / len };
+  }
+  if (hasPointer) {
+    const dx = pointerWorldX - originX;
+    const dy = pointerWorldY - originY;
+    const len = Math.hypot(dx, dy);
+    if (len > 0.0001) return { x: dx / len, y: dy / len };
+  }
+  return { ...FACING_VEC[fallback] };
+}
+
+/**
+ * March from origin along dir up to maxDist, stopping before the first solid tile.
+ * Used to land thrown bombs against walls instead of inside them.
+ */
+export function castThrow(
+  isSolidTile: (tx: number, ty: number) => boolean,
+  originX: number, originY: number,
+  dirX: number, dirY: number,
+  maxDist: number,
+  tileSize = 16,
+): { x: number; y: number } {
+  const step = 2;
+  let x = originX;
+  let y = originY;
+  for (let d = step; d <= maxDist; d += step) {
+    const nx = originX + dirX * d;
+    const ny = originY + dirY * d;
+    if (isSolidTile(Math.floor(nx / tileSize), Math.floor(ny / tileSize))) break;
+    x = nx;
+    y = ny;
+  }
+  return { x, y };
+}

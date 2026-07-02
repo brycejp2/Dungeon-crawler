@@ -3,8 +3,11 @@
 
 export type ItemId =
   | 'sword1' | 'sword2' | 'sword3'
+  | 'bow' | 'arrows'
   | 'healPotion' | 'purityPotion' | 'elixir' | 'bomb'
   | 'key';
+
+export const ARROWS_PER_BUNDLE = 5;
 
 export interface WeaponStats {
   damage: number;
@@ -15,7 +18,7 @@ export interface WeaponStats {
 export interface ItemDef {
   id: ItemId;
   name: string;
-  kind: 'weapon' | 'consumable' | 'key';
+  kind: 'weapon' | 'consumable' | 'key' | 'tool' | 'ammo';
   weapon?: WeaponStats;
   pickupMessage: string;
 }
@@ -35,6 +38,14 @@ export const ITEMS: Record<ItemId, ItemDef> = {
     id: 'sword3', name: 'Chaosbane', kind: 'weapon',
     weapon: { damage: 3, reach: 6, tier: 3 },
     pickupMessage: 'Chaosbane hums with purpose!',
+  },
+  bow: {
+    id: 'bow', name: "Hunter's Bow", kind: 'tool',
+    pickupMessage: "A hunter's bow! Aim with the mouse, click to shoot.",
+  },
+  arrows: {
+    id: 'arrows', name: 'Arrows', kind: 'ammo',
+    pickupMessage: `You gather arrows. (+${ARROWS_PER_BUNDLE})`,
   },
   healPotion: {
     id: 'healPotion', name: 'Heal Potion', kind: 'consumable',
@@ -63,6 +74,8 @@ const CONSUMABLE_ORDER: ItemId[] = ['healPotion', 'purityPotion', 'elixir', 'bom
 export class Inventory {
   weapon: ItemId = 'sword1';
   hasKey = false;
+  hasBow = false;
+  arrows = 0;
   private counts = new Map<ItemId, number>();
   private selectedIdx = 0;
 
@@ -84,6 +97,20 @@ export class Inventory {
     }
     if (def.kind === 'key') {
       this.hasKey = true;
+      return true;
+    }
+    if (def.kind === 'tool') {
+      // duplicate bows become a small arrow refill
+      if (this.hasBow) {
+        this.arrows += 3;
+        return true;
+      }
+      this.hasBow = true;
+      this.arrows += ARROWS_PER_BUNDLE;
+      return true;
+    }
+    if (def.kind === 'ammo') {
+      this.arrows += ARROWS_PER_BUNDLE;
       return true;
     }
     this.counts.set(item, this.count(item) + 1);

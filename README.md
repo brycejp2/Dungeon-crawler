@@ -15,13 +15,18 @@ npm install
 npm run dev      # open the printed localhost URL
 ```
 
-| Action | Keys |
-| --- | --- |
-| Move | WASD / Arrow keys |
-| Attack | Space / J / Z |
-| Dodge (i-frames) | Shift / K / X |
-| Use item | E / L / C |
-| Swap item | Q / Tab |
+| Action | Keyboard + Mouse | Gamepad |
+| --- | --- | --- |
+| Move | WASD / Arrow keys | Left stick |
+| Attack (sword) | Space / J / Z | A |
+| Shoot bow | Left click (aims at cursor) | RT / RB (aims with right stick) |
+| Aim | Mouse cursor | Right stick |
+| Dodge (i-frames) | Shift / K / X | B |
+| Use item | E / L / C | X |
+| Swap item | Q / Tab | Y |
+
+Bombs are thrown toward your aim (up to ~4 tiles, stopping at walls) instead of
+dropped at your feet.
 
 ## The run
 
@@ -33,6 +38,8 @@ npm run dev      # open the printed localhost URL
   (−25) and Elixirs of Order (−50) push it back; descending stairs cleanses a little.
   Mutations are forever — cleansing never revokes them.
 - **Weapons**: Rusty Sword → Soldier's Blade (floor 3) → Chaosbane (floor 6).
+- **Hunter's Bow** (floor 2): mouse- or stick-aimed arrows for picking off archers and
+  bats at range. Arrows are scarce — gather bundles as you descend.
 - **Keys**: floors 2/4/6 seal the stairs behind a chaos lock; find the key first.
 - **Bombs** clear rubble and crowds (careful — they hurt you too).
 - **Permadeath.** The dungeon keeps what it takes.

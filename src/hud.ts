@@ -85,7 +85,18 @@ export class Hud {
     if (weaponSprite) ctx.drawImage(weaponSprite, 6, barY + 1);
     ctx.font = FONT;
     ctx.fillStyle = '#c8c8d8';
-    let x = 26;
+    let x = 20;
+    // bow + arrow count
+    if (inventory.hasBow) {
+      const bowSprite = atlas.items.get('bow');
+      if (bowSprite) {
+        ctx.globalAlpha = inventory.arrows > 0 ? 1 : 0.35;
+        ctx.drawImage(bowSprite, x, barY + 1);
+        ctx.globalAlpha = 1;
+      }
+      ctx.fillText(`${inventory.arrows}`, x + 9, barY + 6);
+      x += 22;
+    }
     for (const slot of slots) {
       const sprite = atlas.items.get(slot.id);
       if (slot.selected && slot.count > 0) {
@@ -105,7 +116,7 @@ export class Hud {
       if (keySprite) ctx.drawImage(keySprite, x + 4, barY + 1);
     }
     ctx.fillStyle = '#707088';
-    ctx.fillText('E:use  Q:swap  Shift:dodge  Space:attack', VIEW_W - 178, barY + 4);
+    ctx.fillText('Click:shoot  E:use  Q:swap  Shift:dodge', VIEW_W - 172, barY + 4);
 
     // --- message log above the bar ---
     ctx.font = FONT;

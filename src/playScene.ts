@@ -5,7 +5,8 @@ import {
   TILE, FINAL_DEPTH, VISION_RADIUS, FOG_RECOMPUTE_HZ,
   STAIRS_CLEANSE, PURITY_POTION_CLEANSE, ELIXIR_CLEANSE,
   CORRUPT_VARIANT_TIER, CORRUPT_VARIANT_CHANCE, CORRUPT_HIT_POINTS,
-  PLAYER_MAX_HP_CAP,
+  PLAYER_MAX_HP_CAP, VIEW_W, VIEW_H,
+  ARROW_SPEED, ARROW_DAMAGE, BOW_COOLDOWN, BOMB_THROW_DIST,
 } from './config';
 import type { Game, Scene, SceneFlow, RunStats } from './game';
 import type { InputState } from './input';
@@ -16,7 +17,7 @@ import {
 import type { FloorData } from './dungeon';
 import { Player, Enemy, moveAndCollide } from './entities';
 import type { World, Projectile, Pickup } from './entities';
-import { aabbOverlap, knockbackVector, swingDamage } from './combat';
+import { aabbOverlap, knockbackVector, swingDamage, resolveAimDir, castThrow } from './combat';
 import {
   newCorruptionState, tickCorruption, addCorruption, cleanse,
   computeMutationEffects, MUTATIONS,
@@ -66,6 +67,12 @@ export class PlayScene implements Scene, World {
   private flashT = 0;
   private flashColor = '#fff';
   private ending = false;
+  // aim state (recomputed every tick, read by render)
+  private aimDirX = 0;
+  private aimDirY = 1;
+  private aimIsPointer = false;
+  private aimPointerWorldX = 0;
+  private aimPointerWorldY = 0;
 
   constructor(
     private readonly flow: SceneFlow,
@@ -184,8 +191,23 @@ export class PlayScene implements Scene, World {
     this.player.update(dt, input, this, this.fx);
     this.aggroBonus = this.fx.aggroDelta;
 
+    // Aim: right stick > mouse pointer > facing
+    const cam = this.cameraPos();
+    this.aimPointerWorldX = input.pointerX + cam.x;
+    this.aimPointerWorldY = input.pointerY + cam.y;
+    this.aimIsPointer = !input.hasStick && input.hasPointer;
+    const aim = resolveAimDir(
+      input.hasStick, input.stickX, input.stickY,
+      input.hasPointer, this.aimPointerWorldX, this.aimPointerWorldY,
+      this.player.cx, this.player.cy,
+      this.player.facing,
+    );
+    this.aimDirX = aim.x;
+    this.aimDirY = aim.y;
+
     if (input.cycleItem) this.inventory.cycle();
     if (input.useItem) this.useSelectedItem(game);
+    if (input.fire) this.tryFireBow();
 
     // Enemies
     for (const e of this.enemies) e.update(dt, this);
@@ -226,7 +248,19 @@ export class PlayScene implements Scene, World {
         continue;
       }
       const rect = { x: pr.x - pr.size / 2, y: pr.y - pr.size / 2, w: pr.size, h: pr.size };
-      if (aabbOverlap(rect, this.player.rect())) {
+      if (pr.friendly) {
+        for (const e of this.enemies) {
+          if (e.dead || !aabbOverlap(rect, e.rect())) continue;
+          e.iframes = 0; // arrows always land; hit-stun only gates the sword
+          if (e.takeDamage(pr.damage)) {
+            const kb = knockbackVector(pr.x - pr.vx, pr.y - pr.vy, e.cx, e.cy, this.fx.knockbackDealtMult * 0.6);
+            e.applyKnockback(kb.x, kb.y);
+            this.audio.play('hit');
+          }
+          pr.dead = true;
+          break;
+        }
+      } else if (aabbOverlap(rect, this.player.rect())) {
         if (this.damagePlayer(pr.damage, pr.x, pr.y, pr.corrupted, game)) pr.dead = true;
       }
     }
@@ -367,14 +401,70 @@ export class PlayScene implements Scene, World {
         this.hud.push('The Elixir of Order burns the chaos away!');
         this.audio.play('potion');
         break;
-      case 'bomb':
-        this.bombs.push({ x: this.player.cx, y: this.player.cy, fuse: 1.2 });
+      case 'bomb': {
+        // lob toward the aim point, stopping at walls
+        const target = castThrow(
+          (tx, ty) => this.isSolidTile(tx, ty),
+          this.player.cx, this.player.cy,
+          this.aimDirX, this.aimDirY,
+          this.throwDistance(),
+          TILE,
+        );
+        this.bombs.push({ x: target.x, y: target.y, fuse: 1.2 });
         this.hud.push('The fuse hisses...');
         break;
+      }
       default:
         break;
     }
     void game;
+  }
+
+  /** Camera top-left in world coords; approximated before the first render. */
+  private cameraPos(): { x: number; y: number } {
+    if (this.renderer) return { x: this.renderer.camera.x, y: this.renderer.camera.y };
+    return {
+      x: Math.max(0, Math.min(this.floor.w * TILE - VIEW_W, this.player.cx - VIEW_W / 2)),
+      y: Math.max(0, Math.min(this.floor.h * TILE - VIEW_H, this.player.cy - VIEW_H / 2)),
+    };
+  }
+
+  /** Mouse throws up to the cursor (capped); stick/facing throws full distance. */
+  private throwDistance(): number {
+    if (!this.aimIsPointer) return BOMB_THROW_DIST;
+    const d = Math.hypot(this.aimPointerWorldX - this.player.cx, this.aimPointerWorldY - this.player.cy);
+    return Math.min(BOMB_THROW_DIST, d);
+  }
+
+  private tryFireBow(): void {
+    if (!this.inventory.hasBow) {
+      this.hud.push('You have no bow.');
+      return;
+    }
+    if (this.inventory.arrows <= 0) {
+      this.hud.push('Out of arrows!');
+      return;
+    }
+    if (this.player.bowCooldown > 0 || this.player.dodging) return;
+    this.player.bowCooldown = BOW_COOLDOWN;
+    this.inventory.arrows--;
+    this.spawnProjectile({
+      x: this.player.cx + this.aimDirX * 6,
+      y: this.player.cy + this.aimDirY * 6,
+      vx: this.aimDirX * ARROW_SPEED,
+      vy: this.aimDirY * ARROW_SPEED,
+      size: 4,
+      damage: ARROW_DAMAGE,
+      corrupted: false,
+      friendly: true,
+      dead: false,
+    });
+    // face the shot
+    this.player.facing =
+      Math.abs(this.aimDirX) > Math.abs(this.aimDirY)
+        ? this.aimDirX > 0 ? 'right' : 'left'
+        : this.aimDirY > 0 ? 'down' : 'up';
+    this.audio.play('shoot');
   }
 
   private explodeBomb(b: Bomb, game: Game): void {
@@ -477,6 +567,15 @@ export class PlayScene implements Scene, World {
 
     for (const fx of this.booms) {
       r.drawBombFx(fx.x, fx.y, BOMB_RADIUS * (0.5 + fx.age * 2), 0.6 - fx.age * 1.5);
+    }
+
+    // aim indicator (only useful once you have something to aim)
+    if (this.inventory.hasBow || this.inventory.count('bomb') > 0) {
+      if (this.aimIsPointer) {
+        r.drawCrosshair(this.aimPointerWorldX, this.aimPointerWorldY);
+      } else {
+        r.drawAimArrow(this.player.cx, this.player.cy, this.aimDirX, this.aimDirY);
+      }
     }
 
     r.drawCorruptionVignette(this.corruption.points, this.time);

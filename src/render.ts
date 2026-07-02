@@ -240,6 +240,32 @@ function paintItem(c: CanvasRenderingContext2D, item: ItemId): void {
       c.fillStyle = '#1a1a1a';
       c.fillRect(3, 3, 2, 2);
       break;
+    case 'bow':
+      c.strokeStyle = '#8a6a2a';
+      c.lineWidth = 1.5;
+      c.beginPath();
+      c.arc(3, 5, 4.5, -Math.PI / 2.6, Math.PI / 2.6);
+      c.stroke();
+      c.strokeStyle = '#d8d8e8';
+      c.lineWidth = 1;
+      c.beginPath();
+      c.moveTo(4, 1);
+      c.lineTo(4, 9);
+      c.stroke();
+      break;
+    case 'arrows':
+      c.strokeStyle = '#c8a060';
+      c.lineWidth = 1;
+      for (const off of [0, 3]) {
+        c.beginPath();
+        c.moveTo(2 + off, 9);
+        c.lineTo(7 + off - 1, 2);
+        c.stroke();
+      }
+      c.fillStyle = '#d8d8e8';
+      c.fillRect(6, 1, 2, 2);
+      c.fillRect(9, 1, 2, 2);
+      break;
     case 'sword1':
     case 'sword2':
     case 'sword3': {
@@ -292,7 +318,7 @@ export class SpriteAtlas {
     this.floorVariants = [0, 1, 2, 3].map((i) =>
       mkCanvas(TILE, TILE, (c) => paintTileFloor(c, 0x9e3779 + i * 7919)),
     );
-    const itemIds: ItemId[] = ['healPotion', 'purityPotion', 'elixir', 'bomb', 'key', 'sword1', 'sword2', 'sword3'];
+    const itemIds: ItemId[] = ['healPotion', 'purityPotion', 'elixir', 'bomb', 'key', 'sword1', 'sword2', 'sword3', 'bow', 'arrows'];
     this.items = new Map(itemIds.map((id) => [id, mkCanvas(10, 10, (c) => paintItem(c, id))]));
   }
 }
@@ -454,9 +480,65 @@ export class Renderer {
 
   drawProjectile(pr: Projectile): void {
     const { ctx, camera } = this;
+    if (pr.friendly) {
+      // arrow: shaft along the flight direction with a bright head
+      const len = Math.hypot(pr.vx, pr.vy) || 1;
+      const dx = pr.vx / len;
+      const dy = pr.vy / len;
+      const sx = pr.x - camera.x;
+      const sy = pr.y - camera.y;
+      ctx.strokeStyle = '#c8a060';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(sx - dx * 4, sy - dy * 4);
+      ctx.lineTo(sx + dx * 3, sy + dy * 3);
+      ctx.stroke();
+      ctx.fillStyle = '#f0f0f8';
+      ctx.fillRect(Math.round(sx + dx * 3 - 1), Math.round(sy + dy * 3 - 1), 2, 2);
+      return;
+    }
     ctx.fillStyle = pr.corrupted ? '#ff30d0' : '#ffd060';
     const s = pr.size;
     ctx.fillRect(Math.round(pr.x - s / 2 - camera.x), Math.round(pr.y - s / 2 - camera.y), s, s);
+  }
+
+  /** Mouse aim: crosshair at the cursor's world position. */
+  drawCrosshair(wx: number, wy: number): void {
+    const { ctx, camera } = this;
+    const sx = Math.round(wx - camera.x);
+    const sy = Math.round(wy - camera.y);
+    ctx.strokeStyle = 'rgba(255, 220, 120, 0.85)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(sx - 4, sy);
+    ctx.lineTo(sx - 1.5, sy);
+    ctx.moveTo(sx + 1.5, sy);
+    ctx.lineTo(sx + 4, sy);
+    ctx.moveTo(sx, sy - 4);
+    ctx.lineTo(sx, sy - 1.5);
+    ctx.moveTo(sx, sy + 1.5);
+    ctx.lineTo(sx, sy + 4);
+    ctx.stroke();
+  }
+
+  /** Stick aim: short direction arrow floating just off the player. */
+  drawAimArrow(px: number, py: number, dirX: number, dirY: number): void {
+    const { ctx, camera } = this;
+    const bx = px + dirX * 16 - camera.x;
+    const by = py + dirY * 16 - camera.y;
+    ctx.strokeStyle = 'rgba(255, 220, 120, 0.85)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(px + dirX * 10 - camera.x, py + dirY * 10 - camera.y);
+    ctx.lineTo(bx, by);
+    // arrowhead
+    const perpX = -dirY;
+    const perpY = dirX;
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx - dirX * 3 + perpX * 2.5, by - dirY * 3 + perpY * 2.5);
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx - dirX * 3 - perpX * 2.5, by - dirY * 3 - perpY * 2.5);
+    ctx.stroke();
   }
 
   drawBombFx(x: number, y: number, radius: number, alpha: number): void {

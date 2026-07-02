@@ -26,6 +26,7 @@ export interface Projectile {
   size: number;
   damage: number;
   corrupted: boolean;
+  friendly: boolean; // fired by the player: hits enemies, never the player
   dead: boolean;
 }
 
@@ -160,6 +161,7 @@ export class Player extends Actor {
   dodgeDirX = 0;
   dodgeDirY = 0;
   dodgeCooldown = 0;
+  bowCooldown = 0;
   attackHeld = false;
 
   constructor(x: number, y: number) {
@@ -185,6 +187,7 @@ export class Player extends Actor {
   update(dt: number, input: InputState, world: World, fx: MutationEffects): void {
     this.stepKnockback(dt, world);
     if (this.dodgeCooldown > 0) this.dodgeCooldown -= dt;
+    if (this.bowCooldown > 0) this.bowCooldown -= dt;
 
     // Swing lifecycle
     if (this.swing) {
@@ -504,6 +507,7 @@ export class Enemy extends Actor {
         size: 4,
         damage: this.touchDamage,
         corrupted: this.corrupted,
+        friendly: false,
         dead: false,
       });
     };
@@ -574,6 +578,7 @@ export class Enemy extends Actor {
           size: 5,
           damage: 1,
           corrupted: true,
+          friendly: false,
           dead: false,
         });
       }

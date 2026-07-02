@@ -41,6 +41,12 @@ export const KNOCKBACK_DECAY = 0.001; // v *= KNOCKBACK_DECAY^dt (gone in ~0.3s)
 export const KNOCKBACK_INPUT_LOCK = 40; // input suppressed while |v| above this
 export const ENEMY_HITSTUN = 0.2; // seconds of enemy i-frames after a hit
 
+// --- Ranged (bow / thrown bombs) ---
+export const ARROW_SPEED = 230; // px/s
+export const ARROW_DAMAGE = 2;
+export const BOW_COOLDOWN = 0.45; // seconds
+export const BOMB_THROW_DIST = 64; // px max lob distance
+
 // --- Enemies ---
 export const ENEMY_BASE_COUNT = 4;
 export const ENEMY_PER_DEPTH = 2;
