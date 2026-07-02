@@ -52,6 +52,11 @@ game.keyboard.attach(window);
 game.switchScene(devFloor !== undefined ? flow.newRun() : flow.title());
 game.start();
 
+// ?debug=1 exposes the game for automated end-to-end tests. Dev-only escape hatch.
+if (params.has('debug')) {
+  (window as unknown as Record<string, unknown>).__game = game;
+}
+
 // Blit loop: virtual canvas -> visible canvas at integer scale
 function blit(): void {
   visibleCtx.drawImage(virtual, 0, 0, visible.width, visible.height);

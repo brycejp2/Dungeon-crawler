@@ -40,6 +40,10 @@ export class Game {
     readonly audio: AudioPort,
   ) {}
 
+  get currentScene(): Scene | null {
+    return this.scene;
+  }
+
   switchScene(scene: Scene): void {
     this.scene = scene;
     scene.enter?.(this);

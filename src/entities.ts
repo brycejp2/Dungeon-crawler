@@ -304,7 +304,10 @@ export class Enemy extends Actor {
     corruptionTier: number,
   ) {
     const s = ENEMY_STATS[kind];
-    const scale = (1 + DEPTH_SCALE * (depth - 1)) * (1 + CORRUPT_TIER_SPAWN_SCALE * corruptionTier);
+    // The boss is hand-tuned; scaling would double-dip on top of its big base stats
+    const scale = kind === 'boss'
+      ? 1
+      : (1 + DEPTH_SCALE * (depth - 1)) * (1 + CORRUPT_TIER_SPAWN_SCALE * corruptionTier);
     const hpScale = corrupted ? scale * 1.5 : scale;
     super(x, y, s.w, s.h, Math.max(1, Math.round(s.hp * hpScale)), Math.max(1, Math.round(s.hp * hpScale)));
     this.speed = corrupted ? s.speed * 1.5 : s.speed;
