@@ -11,7 +11,6 @@ import {
   HASTE_MULT, POISON_TICKS, POISON_INTERVAL,
 } from './config';
 import type { Rect, Facing } from './combat';
-import { swingHitbox } from './combat';
 import type { EnemyKind } from './dungeon';
 import type { InputState } from './input';
 import type { Rng } from './rng';
@@ -153,8 +152,17 @@ export function moveAndCollide(a: Actor, dx: number, dy: number, world: World): 
 
 interface Swing {
   t: number;
-  facing: Facing;
+  dirX: number; // unit aim direction the swing sweeps around
+  dirY: number;
   hitIds: Set<Enemy>;
+}
+
+/** Live swing sector for hit tests and arc rendering. */
+export interface SwingArc {
+  cx: number;
+  cy: number;
+  dirX: number;
+  dirY: number;
 }
 
 export class Player extends Actor {
@@ -197,15 +205,15 @@ export class Player extends Actor {
     return this.iframes > 0 || this.dodging;
   }
 
-  /** Live sword hitbox this tick, or null when not in the active swing phase. */
-  activeSwingHitbox(extraReach: number): Rect | null {
+  /** Live swing sector this tick, or null when not in the active swing phase. */
+  activeSwing(): SwingArc | null {
     if (!this.swing) return null;
     const t = this.swing.t;
     if (t < SWING_WINDUP || t >= SWING_WINDUP + SWING_ACTIVE) return null;
-    return swingHitbox(this.cx, this.cy, this.swing.facing, extraReach);
+    return { cx: this.cx, cy: this.cy, dirX: this.swing.dirX, dirY: this.swing.dirY };
   }
 
-  update(dt: number, input: InputState, world: World, fx: MutationEffects): void {
+  update(dt: number, input: InputState, world: World, fx: MutationEffects, aimX: number, aimY: number): void {
     this.stepKnockback(dt, world);
     if (this.dodgeCooldown > 0) this.dodgeCooldown -= dt;
     if (this.bowCooldown > 0) this.bowCooldown -= dt;
@@ -261,9 +269,15 @@ export class Player extends Actor {
       }
     }
 
-    // Start attack
+    // Start attack: the swing sweeps toward the aim (mouse cursor / right
+    // stick), independent of movement direction.
     if (canAct && input.attack && !this.swing) {
-      this.swing = { t: 0, facing: this.facing, hitIds: new Set() };
+      this.swing = { t: 0, dirX: aimX, dirY: aimY, hitIds: new Set() };
+      // face the swing so the sprite matches the strike
+      this.facing =
+        Math.abs(aimX) > Math.abs(aimY)
+          ? aimX > 0 ? 'right' : 'left'
+          : aimY > 0 ? 'down' : 'up';
       world.audio.play('swing');
     }
 

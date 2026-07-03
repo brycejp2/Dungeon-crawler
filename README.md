@@ -18,8 +18,8 @@ npm run dev      # open the printed localhost URL
 | Action | Keyboard + Mouse | Gamepad |
 | --- | --- | --- |
 | Move | WASD / Arrow keys | Left stick |
-| Attack (sword) | Space / J / Z | A |
-| Shoot bow | Left click (aims at cursor) | RT / RB (aims with right stick) |
+| Attack (sword) | Left click / Space / J / Z — swings toward the cursor | A (swings toward right stick) |
+| Shoot bow | Right click (aims at cursor) | RT / RB (aims with right stick) |
 | Aim | Mouse cursor | Right stick |
 | Dodge (i-frames) | Shift / K / X | B |
 | Hotbar slots 1–9 | 1–9 | Y cycles, X activates |

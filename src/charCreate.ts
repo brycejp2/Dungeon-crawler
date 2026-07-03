@@ -104,7 +104,7 @@ export class CharCreateScene implements Scene {
           this.def.name += ch;
         }
       }
-      if (input.interact || input.pause || input.inventory || input.fire) this.editingName = false;
+      if (input.interact || input.pause || input.inventory || input.click) this.editingName = false;
       return; // navigation is suspended while typing
     }
 
@@ -118,7 +118,7 @@ export class CharCreateScene implements Scene {
         const y = ROW_Y[ROWS[i]!];
         if (input.pointerY >= y - 3 && input.pointerY < y + 12 && input.pointerX > 40 && input.pointerX < VIEW_W - 40) {
           this.cursor = i;
-          if (input.fire) clicked = true;
+          if (input.click) clicked = true;
         }
       }
     }
@@ -126,7 +126,10 @@ export class CharCreateScene implements Scene {
     const row = ROWS[this.cursor]!;
     if (input.menuLeft) this.cycleRow(row, -1);
     if (input.menuRight) this.cycleRow(row, 1);
-    if (input.interact || input.attack || clicked) this.activate(row, game);
+    // Keyboard/gamepad attack confirms; a mouse press only confirms when it
+    // actually lands on a row (left click also raises `attack` for combat).
+    const keyboardConfirm = input.attack && !input.click;
+    if (input.interact || keyboardConfirm || clicked) this.activate(row, game);
   }
 
   render(ctx: CanvasRenderingContext2D): void {

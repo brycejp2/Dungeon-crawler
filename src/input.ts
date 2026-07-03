@@ -11,7 +11,8 @@ export interface InputState {
   cycleItem: boolean; // just pressed
   interact: boolean; // just pressed
   pause: boolean; // just pressed
-  fire: boolean; // just pressed (mouse click / RT / RB) — ranged attack
+  fire: boolean; // just pressed (right click / RT / RB) — ranged attack
+  click: boolean; // just pressed (left mouse button) — UI interactions
   anyKey: boolean; // just pressed (menus)
   hotkey: number | null; // 1-9 just pressed — activate hotbar slot
   inventory: boolean; // just pressed — toggle inventory/spellbook window
@@ -33,7 +34,7 @@ export interface InputState {
 type Action =
   | 'up' | 'down' | 'left' | 'right'
   | 'attack' | 'dodge' | 'useItem' | 'cycleItem' | 'interact' | 'pause' | 'fire'
-  | 'inventory' | 'backspace'
+  | 'click' | 'inventory' | 'backspace'
   | 'hk1' | 'hk2' | 'hk3' | 'hk4' | 'hk5' | 'hk6' | 'hk7' | 'hk8' | 'hk9';
 
 const KEYMAP: Record<string, Action> = {
@@ -127,7 +128,14 @@ export class InputHub {
       this.pointerX = p.x;
       this.pointerY = p.y;
       this.hasPointer = true;
-      if (e.button === 0) this.pressed.add('fire');
+      // Left click swings the melee weapon toward the cursor (and doubles as
+      // the UI click); right click fires the bow.
+      if (e.button === 0) {
+        this.pressed.add('attack');
+        this.pressed.add('click');
+      } else if (e.button === 2) {
+        this.pressed.add('fire');
+      }
       this.anyPressed = true;
     });
     el.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -145,6 +153,7 @@ export class InputHub {
       interact: this.pressed.has('interact'),
       pause: this.pressed.has('pause'),
       fire: this.pressed.has('fire'),
+      click: this.pressed.has('click'),
       anyKey: this.anyPressed,
       hotkey: this.pressedHotkey(),
       inventory: this.pressed.has('inventory'),

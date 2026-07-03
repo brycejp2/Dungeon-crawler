@@ -19,7 +19,7 @@ import {
 import type { FloorData } from './dungeon';
 import { Player, Enemy, moveAndCollide } from './entities';
 import type { World, Projectile, Pickup } from './entities';
-import { aabbOverlap, knockbackVector, swingDamage, resolveAimDir, castThrow } from './combat';
+import { aabbOverlap, knockbackVector, swingDamage, swingArcHits, resolveAimDir, castThrow } from './combat';
 import {
   newCorruptionState, tickCorruption, addCorruption, cleanse,
   computeMutationEffects, mergeEffects, neutralEffects, MUTATIONS,
@@ -245,10 +245,8 @@ export class PlayScene implements Scene, World {
     this.handleCorruptionEvents(events, game);
     if (this.ending) return;
 
-    this.player.update(dt, input, this, this.fx);
-    this.aggroBonus = this.fx.aggroDelta;
-
-    // Aim: right stick > mouse pointer > facing
+    // Aim: right stick > mouse pointer > facing. Resolved before the player
+    // update so melee swings started this tick sweep toward the cursor.
     const cam = this.cameraPos();
     this.aimPointerWorldX = input.pointerX + cam.x;
     this.aimPointerWorldY = input.pointerY + cam.y;
@@ -261,6 +259,9 @@ export class PlayScene implements Scene, World {
     );
     this.aimDirX = aim.x;
     this.aimDirY = aim.y;
+
+    this.player.update(dt, input, this, this.fx, aim.x, aim.y);
+    this.aggroBonus = this.fx.aggroDelta;
 
     // Hotbar: 1-9 direct, Q cycles the gamepad cursor, E activates it
     if (input.cycleItem) this.hotbar.cycle();
@@ -279,13 +280,14 @@ export class PlayScene implements Scene, World {
     // Enemies
     for (const e of this.enemies) e.update(dt, this);
 
-    // Player sword vs enemies
-    const hitbox = this.player.activeSwingHitbox(this.inventory.weaponStats.reach);
-    if (hitbox && this.player.swing) {
+    // Player sword vs enemies: sector test around the aimed swing direction
+    const arc = this.player.activeSwing();
+    if (arc && this.player.swing) {
+      const reach = this.inventory.weaponStats.reach;
       const dmg = swingDamage(this.inventory.weaponStats.damage, this.fx.damageBonus);
       for (const e of this.enemies) {
         if (e.dead || this.player.swing.hitIds.has(e)) continue;
-        if (!aabbOverlap(hitbox, e.rect())) continue;
+        if (!swingArcHits(arc.cx, arc.cy, arc.dirX, arc.dirY, reach, e.rect())) continue;
         this.player.swing.hitIds.add(e);
         if (e.takeDamage(dmg)) {
           const kb = knockbackVector(this.player.cx, this.player.cy, e.cx, e.cy, this.fx.knockbackDealtMult);
@@ -738,8 +740,10 @@ export class PlayScene implements Scene, World {
 
     for (const pr of this.projectiles) r.drawProjectile(pr);
 
-    const hitbox = this.player.activeSwingHitbox(this.inventory.weaponStats.reach);
-    if (hitbox) r.drawSwingArc(hitbox);
+    const swingArc = this.player.activeSwing();
+    if (swingArc) {
+      r.drawSwingArc(swingArc.cx, swingArc.cy, swingArc.dirX, swingArc.dirY, this.inventory.weaponStats.reach);
+    }
 
     for (const fx of this.booms) {
       r.drawBombFx(fx.x, fx.y, fx.radius * (0.5 + fx.age * 2), 0.6 - fx.age * 1.5, fx.color);

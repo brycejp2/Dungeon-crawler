@@ -1,10 +1,13 @@
 // Rendering: procedural sprite atlas (no art assets), camera, tilemap, fog of war,
 // corruption visuals. Draws to the 400x240 virtual canvas; main.ts scales it up.
 
-import { TILE, VIEW_W, VIEW_H, MAP_W, MAP_H, EXPLORED_BRIGHTNESS, CORRUPTION_MAX } from './config';
+import {
+  TILE, VIEW_W, VIEW_H, MAP_W, MAP_H, EXPLORED_BRIGHTNESS, CORRUPTION_MAX,
+  SWING_REACH, SWING_HALF_ANGLE,
+} from './config';
 import { Tile } from './dungeon';
 import type { FloorData, EnemyKind } from './dungeon';
-import type { Facing, Rect } from './combat';
+import type { Facing } from './combat';
 import type { Player, Enemy, Projectile, Pickup } from './entities';
 import type { ItemId } from './items';
 import type { SpellId } from './spells';
@@ -572,15 +575,24 @@ export class Renderer {
     );
   }
 
-  drawSwingArc(hitbox: Rect): void {
+  /** Aimed sword sweep: translucent wedge + bright edge around the aim direction. */
+  drawSwingArc(cx: number, cy: number, dirX: number, dirY: number, extraReach: number): void {
     const { ctx, camera } = this;
-    ctx.fillStyle = 'rgba(240, 240, 255, 0.5)';
-    ctx.fillRect(
-      Math.round(hitbox.x - camera.x),
-      Math.round(hitbox.y - camera.y),
-      Math.round(hitbox.w),
-      Math.round(hitbox.h),
-    );
+    const angle = Math.atan2(dirY, dirX);
+    const radius = SWING_REACH + extraReach;
+    const sx = cx - camera.x;
+    const sy = cy - camera.y;
+    ctx.fillStyle = 'rgba(240, 240, 255, 0.35)';
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+    ctx.arc(sx, sy, radius, angle - SWING_HALF_ANGLE, angle + SWING_HALF_ANGLE);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(sx, sy, radius, angle - SWING_HALF_ANGLE, angle + SWING_HALF_ANGLE);
+    ctx.stroke();
   }
 
   drawProjectile(pr: Projectile): void {

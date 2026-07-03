@@ -34,8 +34,8 @@ export const DODGE_COOLDOWN = 0.7; // seconds
 export const SWING_WINDUP = 0.06;
 export const SWING_ACTIVE = 0.12;
 export const SWING_RECOVERY = 0.12;
-export const SWING_REACH = 18; // px extent in facing direction
-export const SWING_WIDTH = 22; // px perpendicular
+export const SWING_REACH = 18; // px radial extent of the swing sector
+export const SWING_HALF_ANGLE = 1.0; // rad half-width of the swing sector (~115° arc)
 export const KNOCKBACK_SPEED = 180; // px/s impulse
 export const KNOCKBACK_DECAY = 0.001; // v *= KNOCKBACK_DECAY^dt (gone in ~0.3s)
 export const KNOCKBACK_INPUT_LOCK = 40; // input suppressed while |v| above this

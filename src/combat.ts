@@ -1,6 +1,6 @@
 // Pure combat math: AABB collision, swing hitboxes, knockback. All unit-testable.
 
-import { SWING_REACH, SWING_WIDTH, KNOCKBACK_SPEED } from './config';
+import { SWING_REACH, SWING_HALF_ANGLE, KNOCKBACK_SPEED } from './config';
 
 export interface Rect {
   x: number; // top-left
@@ -24,22 +24,30 @@ export function aabbOverlap(a: Rect, b: Rect): boolean {
 }
 
 /**
- * Sword swing hitbox extending from an attacker's center in the facing direction.
- * extraReach comes from weapon tier.
+ * Free-angle sword swing: does a sector (cone) swung from the attacker's
+ * center along the unit direction (dirX, dirY) clip the target rect?
+ * The cone widens by the target's angular radius so a big enemy grazing the
+ * edge of the arc still gets hit, and a target overlapping the attacker's
+ * center is always hit.
  */
-export function swingHitbox(cx: number, cy: number, facing: Facing, extraReach = 0): Rect {
+export function swingArcHits(
+  cx: number, cy: number,
+  dirX: number, dirY: number,
+  extraReach: number,
+  target: Rect,
+  halfAngle = SWING_HALF_ANGLE,
+): boolean {
   const reach = SWING_REACH + extraReach;
-  const width = SWING_WIDTH;
-  switch (facing) {
-    case 'up':
-      return { x: cx - width / 2, y: cy - reach, w: width, h: reach };
-    case 'down':
-      return { x: cx - width / 2, y: cy, w: width, h: reach };
-    case 'left':
-      return { x: cx - reach, y: cy - width / 2, w: reach, h: width };
-    case 'right':
-      return { x: cx, y: cy - width / 2, w: reach, h: width };
-  }
+  const tc = rectCenter(target);
+  const dx = tc.x - cx;
+  const dy = tc.y - cy;
+  const dist = Math.hypot(dx, dy);
+  const targetRadius = Math.hypot(target.w, target.h) / 2;
+  if (dist > reach + targetRadius) return false;
+  if (dist <= targetRadius) return true; // standing inside/on top of the attacker
+  const cosToTarget = (dx * dirX + dy * dirY) / dist;
+  const effectiveHalf = halfAngle + Math.asin(Math.min(1, targetRadius / dist));
+  return cosToTarget >= Math.cos(effectiveHalf);
 }
 
 /** Knockback impulse pushing target away from source; speedMult for Brittle Bones etc. */

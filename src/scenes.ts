@@ -63,8 +63,8 @@ export class TitleScene implements Scene {
       ...TITLE_FLAVOR.map((text, i) => ({
         text, y: 104 + i * 12, font: '8px monospace', color: '#9a90b0',
       })),
-      { text: 'WASD/Arrows move   Space attack   Shift dodge', y: 162, font: '8px monospace', color: '#707088' },
-      { text: 'Mouse aim + Click shoot   1-9 items & spells   I inventory', y: 174, font: '8px monospace', color: '#707088' },
+      { text: 'WASD/Arrows move   Shift dodge   Mouse aims', y: 162, font: '8px monospace', color: '#707088' },
+      { text: 'Left click/Space swing sword   Right click shoot   1-9 hotbar   I bag', y: 174, font: '8px monospace', color: '#707088' },
       { text: 'Gamepad: sticks move/aim, A attack, RT shoot, Y/X hotbar', y: 186, font: '8px monospace', color: '#707088' },
     ];
     if (Math.floor(this.time * 1.5) % 2 === 0) {

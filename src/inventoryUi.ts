@@ -66,7 +66,7 @@ export class InventoryWindow {
       const idx = Math.floor((input.pointerY - LIST_Y) / ROW_H);
       if (idx >= 0 && idx < this.rows.length && input.pointerX >= PANEL_X && input.pointerX <= PANEL_X + PANEL_W) {
         this.cursor = idx;
-        if (input.fire) clicked = true;
+        if (input.click) clicked = true;
       }
     }
 

@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
-  aabbOverlap, swingHitbox, knockbackVector, swingDamage, resolveAimDir, castThrow,
+  aabbOverlap, swingArcHits, knockbackVector, swingDamage, resolveAimDir, castThrow,
 } from '../src/combat';
-import { SWING_REACH, SWING_WIDTH, KNOCKBACK_SPEED } from '../src/config';
+import { SWING_REACH, KNOCKBACK_SPEED } from '../src/config';
 
 describe('aabbOverlap', () => {
   const a = { x: 0, y: 0, w: 10, h: 10 };
@@ -27,41 +27,52 @@ describe('aabbOverlap', () => {
   });
 });
 
-describe('swingHitbox', () => {
+describe('swingArcHits (mouse-aimed sector swing)', () => {
   const cx = 50;
   const cy = 50;
-
-  it('extends in the facing direction for all 4 facings', () => {
-    const up = swingHitbox(cx, cy, 'up');
-    expect(up.y + up.h).toBe(cy);
-    expect(up.h).toBe(SWING_REACH);
-    expect(up.w).toBe(SWING_WIDTH);
-
-    const down = swingHitbox(cx, cy, 'down');
-    expect(down.y).toBe(cy);
-    expect(down.h).toBe(SWING_REACH);
-
-    const left = swingHitbox(cx, cy, 'left');
-    expect(left.x + left.w).toBe(cx);
-    expect(left.w).toBe(SWING_REACH);
-    expect(left.h).toBe(SWING_WIDTH);
-
-    const right = swingHitbox(cx, cy, 'right');
-    expect(right.x).toBe(cx);
-    expect(right.w).toBe(SWING_REACH);
+  // 10x10 target whose center sits `d` px from the attacker along (dx, dy)
+  const targetAt = (dx: number, dy: number, d: number) => ({
+    x: cx + dx * d - 5,
+    y: cy + dy * d - 5,
+    w: 10,
+    h: 10,
   });
 
-  it('is centered on the perpendicular axis', () => {
-    const up = swingHitbox(cx, cy, 'up');
-    expect(up.x + up.w / 2).toBe(cx);
-    const right = swingHitbox(cx, cy, 'right');
-    expect(right.y + right.h / 2).toBe(cy);
+  it('hits a target directly along the aim within reach', () => {
+    expect(swingArcHits(cx, cy, 1, 0, 0, targetAt(1, 0, SWING_REACH))).toBe(true);
+    expect(swingArcHits(cx, cy, 0, -1, 0, targetAt(0, -1, SWING_REACH))).toBe(true);
   });
 
-  it('weapon reach extends the hitbox', () => {
-    const base = swingHitbox(cx, cy, 'right', 0);
-    const long = swingHitbox(cx, cy, 'right', 6);
-    expect(long.w).toBe(base.w + 6);
+  it('works at arbitrary (diagonal) aim angles', () => {
+    const inv = 1 / Math.SQRT2;
+    expect(swingArcHits(cx, cy, inv, inv, 0, targetAt(inv, inv, SWING_REACH))).toBe(true);
+  });
+
+  it('misses a target behind the aim direction', () => {
+    expect(swingArcHits(cx, cy, 1, 0, 0, targetAt(-1, 0, SWING_REACH))).toBe(false);
+  });
+
+  it('misses a target beyond reach plus its radius', () => {
+    expect(swingArcHits(cx, cy, 1, 0, 0, targetAt(1, 0, SWING_REACH + 20))).toBe(false);
+  });
+
+  it('weapon reach bonus extends the range', () => {
+    const far = targetAt(1, 0, SWING_REACH + 12);
+    expect(swingArcHits(cx, cy, 1, 0, 0, far)).toBe(false);
+    expect(swingArcHits(cx, cy, 1, 0, 12, far)).toBe(true);
+  });
+
+  it('perpendicular targets are outside the arc, in-arc flanks are inside', () => {
+    // 90 degrees off-axis: outside a ~57 degree half-angle even with radius slack
+    expect(swingArcHits(cx, cy, 1, 0, 0, targetAt(0, 1, SWING_REACH))).toBe(false);
+    // 45 degrees off-axis: inside the arc
+    const inv = 1 / Math.SQRT2;
+    expect(swingArcHits(cx, cy, 1, 0, 0, targetAt(inv, inv, SWING_REACH * 0.8))).toBe(true);
+  });
+
+  it('always hits a target overlapping the attacker center', () => {
+    // even when the aim points away from it
+    expect(swingArcHits(cx, cy, 1, 0, 0, { x: cx - 6, y: cy - 6, w: 10, h: 10 })).toBe(true);
   });
 });
 
