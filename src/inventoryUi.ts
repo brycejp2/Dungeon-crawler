@@ -140,7 +140,7 @@ export class InventoryWindow {
         if (sprite) ctx.drawImage(sprite, PANEL_X + 8, y);
         const affordable = spellbook.canCast(e.id);
         ctx.fillStyle = i === this.cursor ? '#ffe8a0' : affordable ? '#a8c0ff' : '#586078';
-        ctx.fillText(`${def.name} (${def.cost} mp)`, PANEL_X + 22, y + 2);
+        ctx.fillText(`${def.name} (${spellbook.costOf(e.id)} mp)`, PANEL_X + 22, y + 2);
         ctx.fillStyle = '#707088';
         ctx.fillText(def.description, PANEL_X + 128, y + 2);
       }

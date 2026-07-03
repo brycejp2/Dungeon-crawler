@@ -5,7 +5,7 @@ import {
   TILE, FINAL_DEPTH, VISION_RADIUS, FOG_RECOMPUTE_HZ,
   STAIRS_CLEANSE, PURITY_POTION_CLEANSE, ELIXIR_CLEANSE,
   CORRUPT_VARIANT_TIER, CORRUPT_VARIANT_CHANCE, CORRUPT_HIT_POINTS,
-  PLAYER_MAX_HP_CAP, VIEW_W, VIEW_H,
+  PLAYER_MAX_HP_CAP, PLAYER_START_HP, VIEW_W, VIEW_H,
   ARROW_SPEED, ARROW_DAMAGE, BOW_COOLDOWN, BOMB_THROW_DIST,
   BOLT_DAMAGE, BOLT_SPEED, NOVA_RADIUS, NOVA_DAMAGE,
   HASTE_DURATION, STONESKIN_DURATION, BLINK_DIST, CLEANSE_CORRUPTION,
@@ -22,9 +22,11 @@ import type { World, Projectile, Pickup } from './entities';
 import { aabbOverlap, knockbackVector, swingDamage, resolveAimDir, castThrow } from './combat';
 import {
   newCorruptionState, tickCorruption, addCorruption, cleanse,
-  computeMutationEffects, MUTATIONS,
+  computeMutationEffects, mergeEffects, neutralEffects, MUTATIONS,
 } from './corruption';
 import type { CorruptionState, MutationEffects } from './corruption';
+import { buildCharacter, identityOf, randomCharacter, RACES } from './character';
+import type { CharacterDef } from './character';
 import { Inventory, ITEMS } from './items';
 import type { ItemId } from './items';
 import { Renderer, FOG_HIDDEN, FOG_EXPLORED, FOG_VISIBLE } from './render';
@@ -64,12 +66,15 @@ export class PlayScene implements Scene, World {
   private bombs: Bomb[] = [];
   private booms: BoomFx[] = [];
   private fog: Uint8Array;
-  private corruption: CorruptionState = newCorruptionState();
+  private corruption: CorruptionState;
   private inventory = new Inventory();
   private spellbook = new Spellbook();
   private hotbar = new Hotbar();
   private window = new InventoryWindow();
-  private fx: MutationEffects = computeMutationEffects([]);
+  private character: CharacterDef;
+  private baseFx: MutationEffects = neutralEffects();
+  private baseMaxHp: number;
+  private fx: MutationEffects;
   private hud = new Hud();
   private renderer: Renderer | null = null;
   private time = 0;
@@ -89,25 +94,47 @@ export class PlayScene implements Scene, World {
     private readonly flow: SceneFlow,
     seed: number,
     startDepth = 1,
+    character?: CharacterDef,
   ) {
     this.rng = new Rng(seed);
     this.depth = startDepth;
+    this.character = character ?? randomCharacter(this.rng);
     this.floor = generateFloor(seed, this.depth);
     this.fog = new Uint8Array(this.floor.w * this.floor.h).fill(FOG_HIDDEN);
     this.player = new Player(
       this.floor.spawn.x * TILE + 3,
       this.floor.spawn.y * TILE + 2,
     );
-    // starting spells
-    this.spellbook.learn('chaosBolt');
-    this.spellbook.learn('cleanse');
-    this.hotbar.autoAssign({ kind: 'spell', id: 'chaosBolt' });
-    this.hotbar.autoAssign({ kind: 'spell', id: 'cleanse' });
+
+    // apply the character build
+    const build = buildCharacter(this.character);
+    this.baseFx = build.fx;
+    this.fx = this.baseFx;
+    this.baseMaxHp = Math.max(2, Math.min(PLAYER_MAX_HP_CAP, this.player.maxHp + build.fx.maxHpDelta));
+    this.player.maxHp = this.baseMaxHp;
+    this.player.hp = this.baseMaxHp;
+    this.spellbook.maxMana = Math.max(2, this.spellbook.maxMana + build.maxManaDelta);
+    this.spellbook.mana = this.spellbook.maxMana;
+    this.spellbook.regenMult = build.manaRegenMult;
+    this.spellbook.costReduction = build.spellCostReduction;
+    this.corruption = newCorruptionState(build.graces);
+    for (const spell of build.spells) {
+      this.spellbook.learn(spell);
+      this.hotbar.autoAssign({ kind: 'spell', id: spell });
+    }
+    for (const item of build.items) {
+      this.inventory.add(item);
+      if (ITEMS[item].kind === 'consumable') this.hotbar.autoAssign({ kind: 'item', id: item });
+    }
+    if (build.bow) this.inventory.hasBow = true;
+    this.inventory.arrows += build.arrows;
+
     this.populateFloor();
   }
 
   enter(game: Game): void {
     this.audio = game.audio;
+    this.hud.push(`${identityOf(this.character)} descends.`);
     this.hud.push('The dungeon seethes with chaos. Hurry.');
     this.recomputeFog();
   }
@@ -182,6 +209,7 @@ export class PlayScene implements Scene, World {
     if (this.ending) return;
     this.ending = true;
     const stats: RunStats = {
+      identity: identityOf(this.character),
       depth: this.depth,
       kills: this.kills,
       corruptionPoints: Math.round(this.corruption.points),
@@ -403,15 +431,22 @@ export class PlayScene implements Scene, World {
         this.endRun(game, 'Consumed by Chaos', false);
         return;
       }
+      if (ev.type === 'grace') {
+        this.hud.push('Your blessing holds the chaos at bay!');
+        this.audio.play('unlock');
+        this.flashT = 0.25;
+        this.flashColor = '#ffd040';
+        continue;
+      }
       // mutation
       const def = MUTATIONS[ev.mutation];
       this.hud.push(def.message);
       this.audio.play('mutation');
       this.flashT = 0.35;
       this.flashColor = '#ff20d0';
-      this.fx = computeMutationEffects(this.corruption.mutations);
+      this.fx = mergeEffects(this.baseFx, computeMutationEffects(this.corruption.mutations));
       // apply max-hp change, clamping current hp
-      const newMax = Math.min(PLAYER_MAX_HP_CAP, Math.max(2, 6 + this.fx.maxHpDelta));
+      const newMax = Math.min(PLAYER_MAX_HP_CAP, Math.max(2, PLAYER_START_HP + this.fx.maxHpDelta));
       this.player.maxHp = newMax;
       this.player.hp = Math.min(this.player.hp, newMax);
     }
@@ -666,7 +701,12 @@ export class PlayScene implements Scene, World {
 
   render(ctx: CanvasRenderingContext2D): void {
     if (!this.renderer) {
-      this.renderer = new Renderer(ctx);
+      const race = RACES[this.character.race];
+      this.renderer = new Renderer(ctx, {
+        skin: race.skin,
+        hair: race.hair,
+        longHair: this.character.gender === 'female',
+      });
       this.renderer.camera.snapTo(this.player.cx, this.player.cy);
     }
     const r = this.renderer;

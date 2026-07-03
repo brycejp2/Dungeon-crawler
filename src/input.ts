@@ -17,6 +17,10 @@ export interface InputState {
   inventory: boolean; // just pressed — toggle inventory/spellbook window
   menuUp: boolean; // just pressed (up edge / dpad) — menu navigation
   menuDown: boolean; // just pressed
+  menuLeft: boolean; // just pressed
+  menuRight: boolean; // just pressed
+  typed: string; // printable characters typed since last poll (name entry)
+  backspace: number; // count of backspace presses since last poll
   // aiming
   pointerX: number; // virtual-canvas coords (mouse)
   pointerY: number;
@@ -29,7 +33,7 @@ export interface InputState {
 type Action =
   | 'up' | 'down' | 'left' | 'right'
   | 'attack' | 'dodge' | 'useItem' | 'cycleItem' | 'interact' | 'pause' | 'fire'
-  | 'inventory'
+  | 'inventory' | 'backspace'
   | 'hk1' | 'hk2' | 'hk3' | 'hk4' | 'hk5' | 'hk6' | 'hk7' | 'hk8' | 'hk9';
 
 const KEYMAP: Record<string, Action> = {
@@ -44,6 +48,7 @@ const KEYMAP: Record<string, Action> = {
   KeyF: 'interact', Enter: 'interact',
   Escape: 'pause', KeyP: 'pause',
   KeyI: 'inventory', Tab: 'inventory',
+  Backspace: 'backspace',
   Digit1: 'hk1', Digit2: 'hk2', Digit3: 'hk3',
   Digit4: 'hk4', Digit5: 'hk5', Digit6: 'hk6',
   Digit7: 'hk7', Digit8: 'hk8', Digit9: 'hk9',
@@ -64,6 +69,8 @@ const PAD_BUTTONS: [number, Action][] = [
   [9, 'pause'],
   [12, 'up'],
   [13, 'down'],
+  [14, 'left'],
+  [15, 'right'],
 ];
 
 const STICK_DEADZONE = 0.25;
@@ -76,6 +83,8 @@ export class InputHub {
   private pointerX = 0;
   private pointerY = 0;
   private hasPointer = false;
+  private typedBuf = '';
+  private backspaceCount = 0;
 
   attach(target: Window): void {
     target.addEventListener('keydown', (e) => {
@@ -84,6 +93,12 @@ export class InputHub {
         e.preventDefault();
         if (!this.held.has(action)) this.pressed.add(action);
         this.held.add(action);
+      }
+      // count every backspace (including several within one sim tick, and key repeat)
+      if (e.code === 'Backspace') this.backspaceCount++;
+      // collect printable characters for text entry (name field)
+      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && this.typedBuf.length < 8) {
+        this.typedBuf += e.key;
       }
       if (!e.repeat) this.anyPressed = true;
     });
@@ -135,6 +150,10 @@ export class InputHub {
       inventory: this.pressed.has('inventory'),
       menuUp: this.pressed.has('up'),
       menuDown: this.pressed.has('down'),
+      menuLeft: this.pressed.has('left'),
+      menuRight: this.pressed.has('right'),
+      typed: this.typedBuf,
+      backspace: this.backspaceCount,
       pointerX: this.pointerX,
       pointerY: this.pointerY,
       hasPointer: this.hasPointer,
@@ -145,6 +164,8 @@ export class InputHub {
     this.pollGamepad(state);
     this.pressed.clear();
     this.anyPressed = false;
+    this.typedBuf = '';
+    this.backspaceCount = 0;
     return state;
   }
 
@@ -204,6 +225,8 @@ export class InputHub {
           case 'inventory': state.inventory = true; break;
           case 'up': state.menuUp = true; break;
           case 'down': state.menuDown = true; break;
+          case 'left': state.menuLeft = true; break;
+          case 'right': state.menuRight = true; break;
           default: break;
         }
         state.anyKey = true;

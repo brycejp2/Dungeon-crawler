@@ -6,7 +6,9 @@ import { Game } from './game';
 import type { Scene, SceneFlow, RunStats } from './game';
 import { WebAudio } from './audio';
 import { TitleScene, GameOverScene, VictoryScene } from './scenes';
+import { CharCreateScene } from './charCreate';
 import { PlayScene } from './playScene';
+import type { CharacterDef } from './character';
 
 const visible = document.getElementById('game') as HTMLCanvasElement;
 const visibleCtx = visible.getContext('2d')!;
@@ -37,11 +39,13 @@ const devFloor = params.has('floor') ? Number(params.get('floor')) : undefined;
 
 const flow: SceneFlow = {
   title: (): Scene => new TitleScene(flow),
-  newRun: (seed?: number, startDepth?: number): Scene =>
+  charCreate: (): Scene => new CharCreateScene(flow),
+  newRun: (character?: CharacterDef): Scene =>
     new PlayScene(
       flow,
-      seed ?? devSeed ?? Math.floor(Math.random() * 0xffffffff),
-      startDepth ?? devFloor ?? 1,
+      devSeed ?? Math.floor(Math.random() * 0xffffffff),
+      devFloor ?? 1,
+      character, // undefined => random character (dev shortcut runs)
     ),
   gameOver: (stats: RunStats): Scene => new GameOverScene(stats, flow),
   victory: (stats: RunStats): Scene => new VictoryScene(stats, flow),

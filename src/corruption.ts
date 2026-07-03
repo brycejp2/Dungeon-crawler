@@ -54,14 +54,16 @@ export interface CorruptionState {
   points: number;
   tierReached: number; // count of thresholds already fired (0..4)
   mutations: MutationId[];
+  graces: number; // Blessing of Order: thresholds skipped without a mutation
 }
 
-export function newCorruptionState(): CorruptionState {
-  return { points: 0, tierReached: 0, mutations: [] };
+export function newCorruptionState(graces = 0): CorruptionState {
+  return { points: 0, tierReached: 0, mutations: [], graces };
 }
 
 export type CorruptionEvent =
   | { type: 'mutation'; mutation: MutationId }
+  | { type: 'grace' } // a threshold fired but a blessing absorbed the mutation
   | { type: 'death' };
 
 /** Passive corruption gain per second at a given depth. */
@@ -81,6 +83,11 @@ export function addCorruption(state: CorruptionState, amount: number, rng: Rng):
     state.points >= CORRUPTION_THRESHOLDS[state.tierReached]!
   ) {
     state.tierReached++;
+    if (state.graces > 0) {
+      state.graces--;
+      events.push({ type: 'grace' });
+      continue;
+    }
     const available = ALL_MUTATIONS.filter((m) => !state.mutations.includes(m));
     if (available.length > 0) {
       const mutation = rng.pick(available);
@@ -120,8 +127,8 @@ export interface MutationEffects {
   purityMult: number; // multiplier on purity potion cleansing
 }
 
-export function computeMutationEffects(mutations: readonly MutationId[]): MutationEffects {
-  const fx: MutationEffects = {
+export function neutralEffects(): MutationEffects {
+  return {
     maxHpDelta: 0,
     speedMult: 1,
     dodgeCooldownMult: 1,
@@ -135,6 +142,28 @@ export function computeMutationEffects(mutations: readonly MutationId[]): Mutati
     knockbackTakenMult: 1,
     purityMult: 1,
   };
+}
+
+/** Combine two effect sets: deltas add, multipliers multiply, flags OR. */
+export function mergeEffects(a: MutationEffects, b: MutationEffects): MutationEffects {
+  return {
+    maxHpDelta: a.maxHpDelta + b.maxHpDelta,
+    speedMult: a.speedMult * b.speedMult,
+    dodgeCooldownMult: a.dodgeCooldownMult * b.dodgeCooldownMult,
+    visionDelta: a.visionDelta + b.visionDelta,
+    aggroDelta: a.aggroDelta + b.aggroDelta,
+    poisonOnHit: a.poisonOnHit || b.poisonOnHit,
+    healMult: a.healMult * b.healMult,
+    damageBonus: a.damageBonus + b.damageBonus,
+    corruptionRateMult: a.corruptionRateMult * b.corruptionRateMult,
+    knockbackDealtMult: a.knockbackDealtMult * b.knockbackDealtMult,
+    knockbackTakenMult: a.knockbackTakenMult * b.knockbackTakenMult,
+    purityMult: a.purityMult * b.purityMult,
+  };
+}
+
+export function computeMutationEffects(mutations: readonly MutationId[]): MutationEffects {
+  const fx = neutralEffects();
   for (const m of mutations) {
     switch (m) {
       case 'corruptedFlesh':

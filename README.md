@@ -50,6 +50,33 @@ Spells cost **mana** (blue bar under your hearts, regenerates slowly):
 Beware: corrupted enemies now **poison** you on hit — a damage-over-time that ignores
 i-frames. Cleanse is the cure.
 
+## Forge your hero
+
+Every run starts at the character forge: pick a **name** (or let fate name you),
+**gender**, **race**, **class**, and one **blessing** from a random offering of four —
+or hit **RANDOMIZE** to roll the whole hero. Your identity ("Zora the Elf Mage") is
+carved into the death and victory screens.
+
+| Race | Effect |
+| --- | --- |
+| Human | Adaptable; packs an extra heal potion |
+| Elf | +3 mana, +8% speed, one heart fewer |
+| Dwarf | +1 heart, corruption 10% slower, a bit slow |
+| Orc | +1 sword damage, chaos-tainted (+15% corruption) |
+| Halfling | Quick dodge, +5% speed, one heart fewer, two bombs |
+
+| Class | Effect |
+| --- | --- |
+| Knight | +1 heart, knows Stoneskin, −2 mana |
+| Ranger | Bow + 10 arrows, knows Haste |
+| Mage | +4 mana, faster regen, knows Nova, one heart fewer |
+| Priest | Potions & cleansing 25% stronger, starts with a purity potion |
+| Rogue | Fast dodge, +5% speed, knows Blink, starts with a bomb |
+
+Blessings range from raw stats (+1 heart, +3 mana, +10% speed) to stranger gifts:
+slower corruption, a bow, cheaper spells, extra potions — or the **Blessing of
+Order**, which absorbs your first mutation harmlessly.
+
 ## The run
 
 - **8 floors**, rooms-and-corridors, always fully connected, seeded and deterministic.

@@ -6,7 +6,6 @@ import type { Player } from './entities';
 import type { CorruptionState } from './corruption';
 import type { Inventory } from './items';
 import type { SpriteAtlas } from './render';
-import { SPELLS } from './spells';
 import type { Spellbook, Hotbar, HotbarEntry } from './spells';
 
 const FONT = '7px monospace';
@@ -196,7 +195,7 @@ export class Hud {
       }
       ctx.font = FONT_TINY;
       ctx.fillStyle = canCast ? '#68a0ff' : '#485068';
-      ctx.fillText(`${SPELLS[entry.id].cost}`, x + 8, y + 5);
+      ctx.fillText(`${spellbook.costOf(entry.id)}`, x + 8, y + 5);
     }
   }
 

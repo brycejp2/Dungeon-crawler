@@ -43,7 +43,7 @@ export class TitleScene implements Scene {
       this.armed = true;
       return;
     }
-    if (this.armed && this.time > 0.3) game.switchScene(this.flow.newRun());
+    if (this.armed && this.time > 0.3) game.switchScene(this.flow.charCreate());
   }
 
   render(ctx: CanvasRenderingContext2D): void {
@@ -92,8 +92,9 @@ export class GameOverScene implements Scene {
     ctx.fillRect(0, 0, VIEW_W, VIEW_H);
     const s = this.stats;
     drawCenteredLines(ctx, [
-      { text: 'Y O U   D I E D', y: 44, font: 'bold 18px monospace', color: '#e02848' },
-      { text: s.cause, y: 74, font: '9px monospace', color: '#c8b0c0' },
+      { text: 'Y O U   D I E D', y: 40, font: 'bold 18px monospace', color: '#e02848' },
+      { text: s.identity, y: 66, font: '9px monospace', color: '#e8d8f0' },
+      { text: s.cause, y: 80, font: '9px monospace', color: '#c8b0c0' },
       { text: `Floor reached: B${s.depth}`, y: 104, font: '8px monospace', color: '#9a90b0' },
       { text: `Kills: ${s.kills}`, y: 116, font: '8px monospace', color: '#9a90b0' },
       { text: `Corruption: ${s.corruptionPoints}%  (${s.mutationCount} mutations)`, y: 128, font: '8px monospace', color: '#9a90b0' },
@@ -130,7 +131,7 @@ export class VictoryScene implements Scene {
     const s = this.stats;
     drawCenteredLines(ctx, [
       { text: 'V I C T O R Y', y: 42, font: 'bold 20px monospace', color: '#ffd040' },
-      { text: 'The Herald of Decay is no more.', y: 72, font: '9px monospace', color: '#d8e8d0' },
+      { text: `${s.identity} slew the Herald of Decay!`, y: 72, font: '9px monospace', color: '#d8e8d0' },
       { text: 'The corruption gutters and dies. The village is saved.', y: 86, font: '8px monospace', color: '#9ab090' },
       { text: `Kills: ${s.kills}`, y: 116, font: '8px monospace', color: '#9a90b0' },
       { text: `Final corruption: ${s.corruptionPoints}%  (${s.mutationCount} mutations)`, y: 128, font: '8px monospace', color: '#9a90b0' },

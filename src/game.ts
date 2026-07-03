@@ -5,6 +5,7 @@ import { DT, MAX_STEPS_PER_FRAME } from './config';
 import type { InputState } from './input';
 import { InputHub } from './input';
 import type { AudioPort } from './audio';
+import type { CharacterDef } from './character';
 
 export interface Scene {
   update(dt: number, input: InputState, game: Game): void;
@@ -13,6 +14,7 @@ export interface Scene {
 }
 
 export interface RunStats {
+  identity: string; // "Kara the Elf Mage"
   depth: number;
   kills: number;
   corruptionPoints: number;
@@ -24,7 +26,8 @@ export interface RunStats {
 /** Scene factories wired up in main.ts so scenes and PlayScene never import each other. */
 export interface SceneFlow {
   title(): Scene;
-  newRun(seed?: number, startDepth?: number): Scene;
+  charCreate(): Scene;
+  newRun(character?: CharacterDef): Scene;
   gameOver(stats: RunStats): Scene;
   victory(stats: RunStats): Scene;
 }

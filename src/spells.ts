@@ -54,6 +54,8 @@ export class Spellbook {
   readonly known: SpellId[] = [];
   mana = MANA_MAX;
   maxMana = MANA_MAX;
+  regenMult = 1; // class bonus (Mage)
+  costReduction = 0; // Blessing of Echoes
 
   knows(id: SpellId): boolean {
     return this.known.includes(id);
@@ -67,17 +69,22 @@ export class Spellbook {
   }
 
   regen(dt: number): void {
-    this.mana = Math.min(this.maxMana, this.mana + MANA_REGEN * dt);
+    this.mana = Math.min(this.maxMana, this.mana + MANA_REGEN * this.regenMult * dt);
+  }
+
+  /** Effective cost after reductions (never below 1). */
+  costOf(id: SpellId): number {
+    return Math.max(1, SPELLS[id].cost - this.costReduction);
   }
 
   canCast(id: SpellId): boolean {
-    return this.knows(id) && this.mana >= SPELLS[id].cost;
+    return this.knows(id) && this.mana >= this.costOf(id);
   }
 
   /** Deduct the cost; returns false (and deducts nothing) if it can't be cast. */
   spend(id: SpellId): boolean {
     if (!this.canCast(id)) return false;
-    this.mana -= SPELLS[id].cost;
+    this.mana -= this.costOf(id);
     return true;
   }
 }

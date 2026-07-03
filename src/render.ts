@@ -33,17 +33,29 @@ function tintMagenta(base: HTMLCanvasElement): HTMLCanvasElement {
 
 // --- sprite painters ---
 
-function paintPlayer(c: CanvasRenderingContext2D, facing: Facing): void {
+export interface PlayerPalette {
+  skin: string;
+  hair: string;
+  longHair?: boolean; // extra side locks
+}
+
+const DEFAULT_PALETTE: PlayerPalette = { skin: '#f0c890', hair: '#7a4a20' };
+
+function paintPlayer(c: CanvasRenderingContext2D, facing: Facing, pal: PlayerPalette): void {
   // 12x14: boots, green tunic, head, facing hint
   c.fillStyle = '#5a3a1e';
   c.fillRect(2, 12, 3, 2);
   c.fillRect(7, 12, 3, 2);
   c.fillStyle = '#2e9e46';
   c.fillRect(1, 6, 10, 6);
-  c.fillStyle = '#f0c890';
+  c.fillStyle = pal.skin;
   c.fillRect(3, 1, 6, 6);
-  c.fillStyle = '#7a4a20';
+  c.fillStyle = pal.hair;
   c.fillRect(3, 0, 6, 2); // hair
+  if (pal.longHair) {
+    c.fillRect(2, 1, 1, 5);
+    c.fillRect(9, 1, 1, 5);
+  }
   c.fillStyle = '#1a1a2e';
   if (facing === 'down') {
     c.fillRect(4, 4, 1, 2);
@@ -371,12 +383,12 @@ export class SpriteAtlas {
   items: Map<ItemId, HTMLCanvasElement>;
   spells: Map<SpellId, HTMLCanvasElement>;
 
-  constructor() {
+  constructor(palette: PlayerPalette = DEFAULT_PALETTE) {
     this.player = {
-      up: mkCanvas(12, 14, (c) => paintPlayer(c, 'up')),
-      down: mkCanvas(12, 14, (c) => paintPlayer(c, 'down')),
-      left: mkCanvas(12, 14, (c) => paintPlayer(c, 'left')),
-      right: mkCanvas(12, 14, (c) => paintPlayer(c, 'right')),
+      up: mkCanvas(12, 14, (c) => paintPlayer(c, 'up', palette)),
+      down: mkCanvas(12, 14, (c) => paintPlayer(c, 'down', palette)),
+      left: mkCanvas(12, 14, (c) => paintPlayer(c, 'left', palette)),
+      right: mkCanvas(12, 14, (c) => paintPlayer(c, 'right', palette)),
     };
     this.enemies = {
       chaser: mkCanvas(11, 12, paintChaser),
@@ -444,10 +456,15 @@ function tileHash(x: number, y: number): number {
 }
 
 export class Renderer {
-  readonly atlas = new SpriteAtlas();
+  readonly atlas: SpriteAtlas;
   readonly camera = new Camera();
 
-  constructor(private readonly ctx: CanvasRenderingContext2D) {}
+  constructor(
+    private readonly ctx: CanvasRenderingContext2D,
+    palette?: PlayerPalette,
+  ) {
+    this.atlas = new SpriteAtlas(palette);
+  }
 
   begin(): void {
     this.ctx.fillStyle = '#000';
