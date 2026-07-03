@@ -3,9 +3,13 @@
 // --- Simulation / rendering ---
 export const DT = 1 / 60; // fixed simulation timestep (seconds)
 export const MAX_STEPS_PER_FRAME = 5; // spiral-of-death cap
-export const TILE = 16; // pixels per tile
-export const VIEW_W = 400; // virtual resolution (25 tiles)
-export const VIEW_H = 240; // (15 tiles)
+export const TILE = 16; // logical pixels per tile (world/physics units)
+export const VIEW_W = 480; // logical view (30 tiles), 16:9
+export const VIEW_H = 270; // (16.9 tiles)
+// Art supersample: sprites are baked and the canvas rendered at PX x the
+// logical resolution, so the real framebuffer is 960x540. World units,
+// physics, and UI layout all stay in logical pixels.
+export const PX = 2;
 
 // --- Dungeon ---
 export const MAP_W = 48;

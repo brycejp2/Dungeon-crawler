@@ -723,7 +723,7 @@ export class PlayScene implements Scene, World {
     for (const b of this.bombs) {
       const sprite = r.atlas.items.get('bomb')!;
       const blink = b.fuse < 0.4 && Math.floor(this.time * 12) % 2 === 0;
-      if (!blink) ctx.drawImage(sprite, Math.round(b.x - 5 - r.camera.x), Math.round(b.y - 5 - r.camera.y));
+      if (!blink) ctx.drawImage(sprite, Math.round(b.x - 5 - r.camera.x), Math.round(b.y - 5 - r.camera.y), 10, 10);
     }
 
     // entities y-sorted

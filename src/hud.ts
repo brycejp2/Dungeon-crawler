@@ -114,13 +114,13 @@ export class Hud {
     ctx.fillRect(0, barY - 3, VIEW_W, 21);
     // weapon + bow to the left of the numbered slots
     const weaponSprite = atlas.items.get(inventory.weapon);
-    if (weaponSprite) ctx.drawImage(weaponSprite, 5, barY + 2);
+    if (weaponSprite) ctx.drawImage(weaponSprite, 5, barY + 2, 10, 10);
     ctx.font = FONT;
     if (inventory.hasBow) {
       const bowSprite = atlas.items.get('bow');
       if (bowSprite) {
         ctx.globalAlpha = inventory.arrows > 0 ? 1 : 0.35;
-        ctx.drawImage(bowSprite, 19, barY + 2);
+        ctx.drawImage(bowSprite, 19, barY + 2, 10, 10);
         ctx.globalAlpha = 1;
       }
       ctx.fillStyle = '#c8c8d8';
@@ -142,7 +142,7 @@ export class Hud {
     }
     if (inventory.hasKey) {
       const keySprite = atlas.items.get('key');
-      if (keySprite) ctx.drawImage(keySprite, HOTBAR_X + 9 * HOTBAR_SLOT_W + 4, barY + 2);
+      if (keySprite) ctx.drawImage(keySprite, HOTBAR_X + 9 * HOTBAR_SLOT_W + 4, barY + 2, 10, 10);
     }
     ctx.font = FONT_TINY;
     ctx.fillStyle = '#707088';
@@ -177,7 +177,7 @@ export class Hud {
       const sprite = atlas.items.get(entry.id);
       if (sprite) {
         ctx.globalAlpha = count > 0 ? 1 : 0.25;
-        ctx.drawImage(sprite, x, y);
+        ctx.drawImage(sprite, x, y, 10, 10);
         ctx.globalAlpha = 1;
       }
       if (count > 0) {
@@ -190,7 +190,7 @@ export class Hud {
       const sprite = atlas.spells.get(entry.id);
       if (sprite) {
         ctx.globalAlpha = canCast ? 1 : 0.3;
-        ctx.drawImage(sprite, x, y);
+        ctx.drawImage(sprite, x, y, 10, 10);
         ctx.globalAlpha = 1;
       }
       ctx.font = FONT_TINY;

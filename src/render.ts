@@ -1,8 +1,10 @@
 // Rendering: procedural sprite atlas (no art assets), camera, tilemap, fog of war,
-// corruption visuals. Draws to the 400x240 virtual canvas; main.ts scales it up.
+// corruption visuals. Draws in logical coordinates to a PX-supersampled canvas;
+// sprites are baked at PX x detail and drawn back at logical size, so each art
+// texel lands on exactly one framebuffer pixel.
 
 import {
-  TILE, VIEW_W, VIEW_H, MAP_W, MAP_H, EXPLORED_BRIGHTNESS, CORRUPTION_MAX,
+  TILE, VIEW_W, VIEW_H, MAP_W, MAP_H, PX, EXPLORED_BRIGHTNESS, CORRUPTION_MAX,
   SWING_REACH, SWING_HALF_ANGLE,
 } from './config';
 import { Tile } from './dungeon';
@@ -25,6 +27,28 @@ function mkCanvas(w: number, h: number, draw: (c: CanvasRenderingContext2D) => v
   return canvas;
 }
 
+/**
+ * Bake a sprite at PX x supersampled detail. `w`/`h` are the logical size the
+ * sprite occupies in the world; the painter draws on a canvas PX times larger,
+ * so it works on a grid twice as fine as the old art.
+ */
+function mkSprite(w: number, h: number, draw: (c: CanvasRenderingContext2D) => void): HTMLCanvasElement {
+  return mkCanvas(w * PX, h * PX, draw);
+}
+
+/** Bake legacy 1x painters (small UI icons) by scaling the context up. */
+function mkScaled(w: number, h: number, draw: (c: CanvasRenderingContext2D) => void): HTMLCanvasElement {
+  return mkCanvas(w * PX, h * PX, (c) => {
+    c.scale(PX, PX);
+    draw(c);
+  });
+}
+
+/** Round a logical coordinate to the framebuffer pixel grid (1/PX steps). */
+function snap(v: number): number {
+  return Math.round(v * PX) / PX;
+}
+
 function tintMagenta(base: HTMLCanvasElement): HTMLCanvasElement {
   return mkCanvas(base.width, base.height, (c) => {
     c.drawImage(base, 0, 0);
@@ -44,174 +68,391 @@ export interface PlayerPalette {
 
 const DEFAULT_PALETTE: PlayerPalette = { skin: '#f0c890', hair: '#7a4a20' };
 
+// All world painters draw at PX x detail: coordinates below are framebuffer
+// pixels on a grid twice as fine as the logical world unit.
+
 function paintPlayer(c: CanvasRenderingContext2D, facing: Facing, pal: PlayerPalette): void {
-  // 12x14: boots, green tunic, head, facing hint
+  // logical 12x14 -> 24x28 canvas: boots, tunic with belt+shading, arms, head
+  const side = facing === 'left' || facing === 'right';
+  // boots
+  c.fillStyle = '#4a2e16';
+  c.fillRect(4, 24, 6, 4);
+  c.fillRect(14, 24, 6, 4);
   c.fillStyle = '#5a3a1e';
-  c.fillRect(2, 12, 3, 2);
-  c.fillRect(7, 12, 3, 2);
+  c.fillRect(4, 24, 6, 2);
+  c.fillRect(14, 24, 6, 2);
+  // tunic
+  c.fillStyle = '#227a36';
+  c.fillRect(2, 12, 20, 12);
   c.fillStyle = '#2e9e46';
-  c.fillRect(1, 6, 10, 6);
+  c.fillRect(3, 12, 18, 9); // lit torso
+  c.fillStyle = '#38b854';
+  c.fillRect(4, 13, 7, 4); // chest highlight
+  // belt
+  c.fillStyle = '#4a2e16';
+  c.fillRect(3, 20, 18, 2);
+  c.fillStyle = '#c8a040';
+  c.fillRect(10, 20, 4, 2); // buckle
+  // arms (skin) at the tunic sides
   c.fillStyle = pal.skin;
-  c.fillRect(3, 1, 6, 6);
-  c.fillStyle = pal.hair;
-  c.fillRect(3, 0, 6, 2); // hair
-  if (pal.longHair) {
-    c.fillRect(2, 1, 1, 5);
-    c.fillRect(9, 1, 1, 5);
+  if (side) {
+    c.fillRect(facing === 'left' ? 1 : 20, 14, 3, 6);
+  } else {
+    c.fillRect(0, 14, 3, 6);
+    c.fillRect(21, 14, 3, 6);
   }
+  // head
+  c.fillStyle = pal.skin;
+  c.fillRect(5, 2, 14, 11);
+  c.fillStyle = 'rgba(0,0,0,0.15)';
+  c.fillRect(5, 11, 14, 2); // chin shadow
+  // hair
+  c.fillStyle = pal.hair;
+  c.fillRect(4, 0, 16, 4);
+  c.fillRect(4, 3, 3, 3);
+  c.fillRect(17, 3, 3, 3);
+  if (facing === 'up') c.fillRect(5, 2, 14, 9); // back of head: all hair
+  if (pal.longHair) {
+    c.fillRect(3, 2, 2, 11);
+    c.fillRect(19, 2, 2, 11);
+  }
+  // face
   c.fillStyle = '#1a1a2e';
   if (facing === 'down') {
-    c.fillRect(4, 4, 1, 2);
-    c.fillRect(7, 4, 1, 2);
+    c.fillRect(8, 7, 2, 3);
+    c.fillRect(14, 7, 2, 3);
   } else if (facing === 'left') {
-    c.fillRect(3, 4, 1, 2);
+    c.fillRect(6, 7, 2, 3);
+    c.fillStyle = 'rgba(0,0,0,0.1)';
+    c.fillRect(13, 3, 6, 10); // turned-away shading
   } else if (facing === 'right') {
-    c.fillRect(8, 4, 1, 2);
+    c.fillRect(16, 7, 2, 3);
+    c.fillStyle = 'rgba(0,0,0,0.1)';
+    c.fillRect(5, 3, 6, 10);
   }
-  // facing 'up': back of head, no eyes
 }
 
 function paintChaser(c: CanvasRenderingContext2D): void {
-  // 11x12 goblin
+  // logical 11x12 -> 22x24 goblin: warty body, big ears, mad grin
+  c.fillStyle = '#516d1e';
+  c.fillRect(2, 6, 18, 16); // body outline-ish base
   c.fillStyle = '#6a8a2a';
-  c.fillRect(1, 3, 9, 8);
-  c.fillRect(0, 1, 3, 4); // ears
-  c.fillRect(8, 1, 3, 4);
+  c.fillRect(3, 6, 16, 14);
+  c.fillStyle = '#7fa338';
+  c.fillRect(4, 7, 7, 5); // highlight
+  // ears
+  c.fillStyle = '#6a8a2a';
+  c.fillRect(0, 2, 5, 8);
+  c.fillRect(17, 2, 5, 8);
+  c.fillStyle = '#516d1e';
+  c.fillRect(1, 3, 2, 5);
+  c.fillRect(19, 3, 2, 5);
+  // feet
   c.fillStyle = '#3a5a10';
-  c.fillRect(2, 11, 3, 1);
-  c.fillRect(6, 11, 3, 1);
+  c.fillRect(4, 22, 6, 2);
+  c.fillRect(12, 22, 6, 2);
+  // eyes: yellow with dark pupils
   c.fillStyle = '#ffdd30';
-  c.fillRect(3, 5, 2, 2);
-  c.fillRect(7, 5, 2, 2);
+  c.fillRect(5, 10, 4, 4);
+  c.fillRect(13, 10, 4, 4);
+  c.fillStyle = '#201800';
+  c.fillRect(7, 11, 2, 2);
+  c.fillRect(14, 11, 2, 2);
+  // grin with teeth
   c.fillStyle = '#902020';
-  c.fillRect(4, 8, 3, 1); // mouth
+  c.fillRect(7, 16, 8, 3);
+  c.fillStyle = '#e8e8d8';
+  c.fillRect(8, 16, 2, 1);
+  c.fillRect(12, 16, 2, 1);
+  // warts
+  c.fillStyle = '#8fae48';
+  c.fillRect(16, 8, 1, 1);
+  c.fillRect(5, 16, 1, 1);
 }
 
 function paintArcher(c: CanvasRenderingContext2D): void {
-  // 10x12 hooded cultist
+  // logical 10x12 -> 20x24 hooded cultist: layered robe, glowing eyes, bow arm
+  c.fillStyle = '#411c4e';
+  c.fillRect(2, 4, 16, 20); // robe base
   c.fillStyle = '#5a2a6a';
-  c.fillRect(1, 2, 8, 10);
+  c.fillRect(3, 4, 14, 18);
+  c.fillStyle = '#6d3580';
+  c.fillRect(4, 12, 5, 8); // fold highlight
+  c.fillStyle = '#411c4e';
+  c.fillRect(9, 12, 2, 10); // center fold shadow
+  // hood
   c.fillStyle = '#3a1a4a';
-  c.fillRect(1, 2, 8, 4); // hood
+  c.fillRect(2, 2, 16, 9);
+  c.fillStyle = '#2a1038';
+  c.fillRect(4, 6, 12, 5); // hood cavity
+  // glowing eyes
   c.fillStyle = '#ff4040';
-  c.fillRect(3, 4, 1, 1);
-  c.fillRect(6, 4, 1, 1);
+  c.fillRect(6, 8, 2, 2);
+  c.fillRect(12, 8, 2, 2);
+  c.fillStyle = '#ffb0a0';
+  c.fillRect(6, 8, 1, 1);
+  c.fillRect(12, 8, 1, 1);
+  // rope belt
+  c.fillStyle = '#c8a040';
+  c.fillRect(3, 14, 14, 1);
+  // bow arm
   c.fillStyle = '#8a6a2a';
-  c.fillRect(0, 6, 2, 5); // bow arm
+  c.fillRect(0, 12, 3, 9);
+  c.fillStyle = '#a8823a';
+  c.fillRect(0, 12, 1, 9);
 }
 
 function paintBat(c: CanvasRenderingContext2D): void {
-  // 9x8
+  // logical 9x8 -> 18x16: membrane wings with finger bones
   c.fillStyle = '#4a4a6a';
-  c.fillRect(0, 2, 3, 3);
-  c.fillRect(6, 2, 3, 3);
+  c.fillRect(0, 4, 6, 6); // left wing
+  c.fillRect(12, 4, 6, 6); // right wing
+  c.fillStyle = '#3a3a54';
+  c.fillRect(0, 8, 6, 2); // wing bottom shading
+  c.fillRect(12, 8, 6, 2);
+  c.fillStyle = '#5d5d80';
+  c.fillRect(2, 4, 1, 5); // wing bones
+  c.fillRect(4, 4, 1, 5);
+  c.fillRect(13, 4, 1, 5);
+  c.fillRect(15, 4, 1, 5);
+  // body
   c.fillStyle = '#2a2a3e';
-  c.fillRect(3, 1, 3, 5);
+  c.fillRect(6, 2, 6, 10);
+  c.fillStyle = '#383850';
+  c.fillRect(7, 3, 3, 4);
+  // ears
+  c.fillStyle = '#2a2a3e';
+  c.fillRect(6, 0, 2, 3);
+  c.fillRect(10, 0, 2, 3);
+  // eyes + fangs
   c.fillStyle = '#ff3030';
-  c.fillRect(3, 2, 1, 1);
-  c.fillRect(5, 2, 1, 1);
+  c.fillRect(7, 4, 1, 2);
+  c.fillRect(10, 4, 1, 2);
+  c.fillStyle = '#e8e8d8';
+  c.fillRect(7, 9, 1, 2);
+  c.fillRect(10, 9, 1, 2);
 }
 
 function paintBoss(c: CanvasRenderingContext2D): void {
-  // 26x26 Herald of Decay
+  // logical 26x26 -> 52x52 Herald of Decay: horned bulk, glowing seams, maw
+  // body
+  c.fillStyle = '#3f1034';
+  c.fillRect(5, 11, 42, 38); // dark rim
   c.fillStyle = '#5a1a4a';
-  c.fillRect(3, 6, 20, 18);
+  c.fillRect(7, 13, 38, 34);
   c.fillStyle = '#7a2a5a';
-  c.fillRect(5, 8, 16, 12);
+  c.fillRect(10, 16, 32, 24); // lit mass
+  c.fillStyle = '#94396c';
+  c.fillRect(12, 18, 12, 8); // highlight
+  // shoulder spikes
   c.fillStyle = '#2a0a1e';
-  c.fillRect(0, 0, 5, 8); // horns
-  c.fillRect(21, 0, 5, 8);
-  c.fillRect(2, 0, 3, 4);
+  c.fillRect(2, 18, 6, 10);
+  c.fillRect(44, 18, 6, 10);
+  // horns
+  c.fillStyle = '#2a0a1e';
+  c.fillRect(0, 0, 10, 16);
+  c.fillRect(42, 0, 10, 16);
+  c.fillStyle = '#1a0512';
+  c.fillRect(0, 0, 5, 8);
+  c.fillRect(47, 0, 5, 8);
+  c.fillStyle = '#4a1a3a';
+  c.fillRect(7, 4, 3, 10); // horn inner light
+  c.fillRect(42, 4, 3, 10);
+  // eyes: burning pink with cores
   c.fillStyle = '#ff20a0';
-  c.fillRect(8, 11, 3, 3); // eyes
-  c.fillRect(15, 11, 3, 3);
+  c.fillRect(15, 21, 7, 6);
+  c.fillRect(30, 21, 7, 6);
+  c.fillStyle = '#ffd0e8';
+  c.fillRect(17, 23, 3, 2);
+  c.fillRect(32, 23, 3, 2);
+  // maw with teeth
   c.fillStyle = '#1a0a12';
-  c.fillRect(9, 17, 8, 3); // maw
-  c.fillStyle = '#ff20a0';
-  c.fillRect(10, 17, 1, 1);
-  c.fillRect(13, 17, 1, 1);
-  c.fillRect(15, 17, 1, 1);
+  c.fillRect(16, 33, 20, 8);
+  c.fillStyle = '#e8d8e0';
+  for (let i = 0; i < 5; i++) c.fillRect(18 + i * 4, 33, 2, 3);
+  for (let i = 0; i < 4; i++) c.fillRect(20 + i * 4, 38, 2, 3);
+  // corruption seams
+  c.fillStyle = '#ff20d0';
+  c.fillRect(8, 30, 6, 1);
+  c.fillRect(38, 28, 6, 1);
+  c.fillRect(24, 14, 1, 5);
+  // claws
+  c.fillStyle = '#2a0a1e';
+  c.fillRect(4, 46, 10, 6);
+  c.fillRect(38, 46, 10, 6);
+  c.fillStyle = '#e8d8e0';
+  c.fillRect(5, 50, 2, 2);
+  c.fillRect(9, 50, 2, 2);
+  c.fillRect(41, 50, 2, 2);
+  c.fillRect(45, 50, 2, 2);
 }
+
+const T2 = TILE * PX; // 32: tile size in framebuffer pixels
 
 function paintTileWall(c: CanvasRenderingContext2D): void {
   c.fillStyle = '#3a3a52';
-  c.fillRect(0, 0, TILE, TILE);
-  c.fillStyle = '#4a4a66';
-  c.fillRect(0, 0, TILE, 4); // top face highlight
-  c.fillStyle = '#2a2a3e';
-  c.fillRect(0, TILE - 2, TILE, 2);
-  c.fillStyle = '#32324a';
-  c.fillRect(2, 6, 5, 3);
-  c.fillRect(9, 10, 5, 3);
+  c.fillRect(0, 0, T2, T2);
+  // top face catches the light
+  c.fillStyle = '#4c4c6a';
+  c.fillRect(0, 0, T2, 8);
+  c.fillStyle = '#585878';
+  c.fillRect(0, 0, T2, 2);
+  // bottom shadow
+  c.fillStyle = '#26263a';
+  c.fillRect(0, T2 - 4, T2, 4);
+  // brick pattern with mortar lines
+  c.fillStyle = '#2e2e44';
+  c.fillRect(0, 15, T2, 2); // horizontal mortar
+  c.fillRect(0, 24, T2, 1);
+  c.fillRect(10, 8, 2, 7); // vertical seams, offset per row
+  c.fillRect(24, 8, 2, 7);
+  c.fillRect(4, 17, 2, 7);
+  c.fillRect(17, 17, 2, 7);
+  c.fillRect(27, 25, 2, 5);
+  c.fillRect(12, 25, 2, 5);
+  // brick face highlights
+  c.fillStyle = '#42425e';
+  c.fillRect(12, 9, 10, 2);
+  c.fillRect(6, 18, 9, 2);
 }
 
 function paintTileFloor(c: CanvasRenderingContext2D, seedHash: number): void {
   c.fillStyle = '#1c1c28';
-  c.fillRect(0, 0, TILE, TILE);
-  c.fillStyle = '#232332';
-  // deterministic speckle from tile hash
+  c.fillRect(0, 0, T2, T2);
+  // large flagstone shading
+  c.fillStyle = '#20202e';
+  c.fillRect(1, 1, T2 - 2, T2 - 2);
+  c.fillStyle = '#1a1a26';
+  c.fillRect(0, 0, T2, 1);
+  c.fillRect(0, 0, 1, T2);
+  // deterministic speckle + cracks from tile hash
   let s = seedHash;
-  for (let i = 0; i < 4; i++) {
-    s = (s * 1103515245 + 12345) & 0x7fffffff;
-    c.fillRect(s % TILE, (s >> 4) % TILE, 1, 1);
+  const next = () => (s = (s * 1103515245 + 12345) & 0x7fffffff);
+  c.fillStyle = '#262636';
+  for (let i = 0; i < 7; i++) {
+    next();
+    c.fillRect(s % T2, (s >> 5) % T2, 1 + (s % 2), 1);
   }
+  c.fillStyle = '#15151f';
+  next();
+  const cx = s % (T2 - 8);
+  const cy = (s >> 5) % (T2 - 8);
+  c.fillRect(cx, cy + 4, 5, 1); // small crack
+  c.fillRect(cx + 4, cy + 5, 1, 3);
 }
 
 function paintTileCorrupt(c: CanvasRenderingContext2D): void {
   c.fillStyle = '#241428';
-  c.fillRect(0, 0, TILE, TILE);
+  c.fillRect(0, 0, T2, T2);
+  c.fillStyle = '#2c1832';
+  c.fillRect(1, 1, T2 - 2, T2 - 2);
+  // branching veins
   c.fillStyle = '#58185e';
-  c.fillRect(3, 3, 2, 2);
-  c.fillRect(10, 7, 2, 2);
-  c.fillRect(6, 12, 2, 2);
+  c.fillRect(4, 6, 12, 2);
+  c.fillRect(14, 8, 2, 8);
+  c.fillRect(14, 14, 10, 2);
+  c.fillRect(22, 16, 2, 8);
+  c.fillRect(8, 22, 8, 2);
+  // pustules with bright cores
   c.fillStyle = '#8a20a0';
-  c.fillRect(11, 12, 1, 1);
-  c.fillRect(4, 9, 1, 1);
+  c.fillRect(6, 5, 4, 4);
+  c.fillRect(21, 14, 4, 4);
+  c.fillRect(12, 24, 3, 3);
+  c.fillStyle = '#d040e8';
+  c.fillRect(7, 6, 2, 2);
+  c.fillRect(22, 15, 2, 2);
+  c.fillRect(13, 25, 1, 1);
 }
 
 function paintStairsDown(c: CanvasRenderingContext2D): void {
-  c.fillStyle = '#05050a';
-  c.fillRect(0, 0, TILE, TILE);
-  c.fillStyle = '#2a2a3e';
-  c.fillRect(0, 0, TILE, 4);
   c.fillStyle = '#1c1c28';
-  c.fillRect(2, 4, 12, 3);
-  c.fillStyle = '#12121c';
-  c.fillRect(4, 7, 8, 3);
+  c.fillRect(0, 0, T2, T2);
+  // descending steps into darkness
+  const shades = ['#2e2e44', '#232336', '#191926', '#101018', '#05050a'];
+  for (let i = 0; i < 5; i++) {
+    const inset = i * 3;
+    c.fillStyle = shades[i]!;
+    c.fillRect(2 + inset, 2 + inset, T2 - 4 - inset * 2, T2 - 4 - inset * 2);
+  }
+  c.fillStyle = '#000005';
+  c.fillRect(14, 14, 8, 8); // the drop
+  // step edge highlights
+  c.fillStyle = '#3c3c56';
+  c.fillRect(2, 2, T2 - 4, 1);
+  c.fillRect(5, 5, T2 - 10, 1);
 }
 
 function paintStairsUp(c: CanvasRenderingContext2D): void {
   c.fillStyle = '#1c1c28';
-  c.fillRect(0, 0, TILE, TILE);
+  c.fillRect(0, 0, T2, T2);
+  // ascending steps toward the light
+  c.fillStyle = '#2e2e44';
+  c.fillRect(2, 22, 28, 8);
   c.fillStyle = '#3c3c56';
-  c.fillRect(2, 10, 12, 4);
+  c.fillRect(5, 15, 22, 8);
   c.fillStyle = '#4c4c6a';
-  c.fillRect(4, 6, 8, 4);
+  c.fillRect(8, 8, 16, 8);
   c.fillStyle = '#5c5c7e';
-  c.fillRect(6, 2, 4, 4);
+  c.fillRect(11, 2, 10, 7);
+  // step lips
+  c.fillStyle = '#6e6e94';
+  c.fillRect(2, 22, 28, 1);
+  c.fillRect(5, 15, 22, 1);
+  c.fillRect(8, 8, 16, 1);
+  c.fillRect(11, 2, 10, 1);
 }
 
 function paintDoor(c: CanvasRenderingContext2D): void {
+  // stone frame
+  c.fillStyle = '#3a3a52';
+  c.fillRect(0, 0, T2, T2);
+  // wooden door with planks
   c.fillStyle = '#5a3a1e';
-  c.fillRect(1, 0, TILE - 2, TILE);
+  c.fillRect(3, 1, T2 - 6, T2 - 2);
   c.fillStyle = '#6e4a28';
-  c.fillRect(3, 2, TILE - 6, TILE - 4);
+  c.fillRect(5, 3, T2 - 10, T2 - 6);
+  c.fillStyle = '#5a3a1e';
+  c.fillRect(11, 3, 2, T2 - 6); // plank seams
+  c.fillRect(19, 3, 2, T2 - 6);
+  // iron bands
+  c.fillStyle = '#484858';
+  c.fillRect(4, 7, T2 - 8, 2);
+  c.fillRect(4, 23, T2 - 8, 2);
+  c.fillStyle = '#686880';
+  c.fillRect(4, 7, T2 - 8, 1);
+  // chaos lock plate + keyhole
   c.fillStyle = '#ffd040';
-  c.fillRect(7, 7, 3, 2); // keyhole plate
+  c.fillRect(13, 13, 7, 6);
+  c.fillStyle = '#c89820';
+  c.fillRect(13, 17, 7, 2);
   c.fillStyle = '#1a1a1a';
-  c.fillRect(8, 7, 1, 2);
+  c.fillRect(15, 14, 2, 2);
+  c.fillRect(15, 16, 1, 2);
 }
 
 function paintRubble(c: CanvasRenderingContext2D): void {
   c.fillStyle = '#1c1c28';
-  c.fillRect(0, 0, TILE, TILE);
-  c.fillStyle = '#55556e';
-  c.fillRect(2, 6, 6, 6);
-  c.fillRect(8, 3, 5, 5);
-  c.fillRect(9, 9, 5, 5);
-  c.fillStyle = '#3c3c52';
-  c.fillRect(3, 7, 3, 3);
-  c.fillRect(10, 10, 3, 3);
+  c.fillRect(0, 0, T2, T2);
+  c.fillStyle = '#20202e';
+  c.fillRect(1, 1, T2 - 2, T2 - 2);
+  // rock pile with lit tops and shadowed bases
+  const rock = (x: number, y: number, w: number, h: number) => {
+    c.fillStyle = '#3c3c52';
+    c.fillRect(x, y, w, h);
+    c.fillStyle = '#55556e';
+    c.fillRect(x + 1, y + 1, w - 2, Math.max(1, Math.floor(h / 2) - 1));
+    c.fillStyle = '#6a6a86';
+    c.fillRect(x + 1, y + 1, Math.max(1, Math.floor(w / 3)), 1);
+  };
+  rock(3, 12, 12, 12);
+  rock(15, 5, 11, 10);
+  rock(17, 17, 11, 11);
+  rock(8, 22, 8, 7);
+  // dust specks
+  c.fillStyle = '#2e2e40';
+  c.fillRect(5, 9, 2, 1);
+  c.fillRect(27, 14, 2, 1);
+  c.fillRect(13, 29, 2, 1);
 }
 
 function paintItem(c: CanvasRenderingContext2D, item: ItemId): void {
@@ -388,41 +629,41 @@ export class SpriteAtlas {
 
   constructor(palette: PlayerPalette = DEFAULT_PALETTE) {
     this.player = {
-      up: mkCanvas(12, 14, (c) => paintPlayer(c, 'up', palette)),
-      down: mkCanvas(12, 14, (c) => paintPlayer(c, 'down', palette)),
-      left: mkCanvas(12, 14, (c) => paintPlayer(c, 'left', palette)),
-      right: mkCanvas(12, 14, (c) => paintPlayer(c, 'right', palette)),
+      up: mkSprite(12, 14, (c) => paintPlayer(c, 'up', palette)),
+      down: mkSprite(12, 14, (c) => paintPlayer(c, 'down', palette)),
+      left: mkSprite(12, 14, (c) => paintPlayer(c, 'left', palette)),
+      right: mkSprite(12, 14, (c) => paintPlayer(c, 'right', palette)),
     };
     this.enemies = {
-      chaser: mkCanvas(11, 12, paintChaser),
-      archer: mkCanvas(10, 12, paintArcher),
-      bat: mkCanvas(9, 8, paintBat),
+      chaser: mkSprite(11, 12, paintChaser),
+      archer: mkSprite(10, 12, paintArcher),
+      bat: mkSprite(9, 8, paintBat),
     };
     this.enemiesCorrupt = {
       chaser: tintMagenta(this.enemies.chaser),
       archer: tintMagenta(this.enemies.archer),
       bat: tintMagenta(this.enemies.bat),
     };
-    this.boss = mkCanvas(26, 26, paintBoss);
+    this.boss = mkSprite(26, 26, paintBoss);
     this.tiles = new Map<Tile, HTMLCanvasElement>([
-      [Tile.Wall, mkCanvas(TILE, TILE, paintTileWall)],
-      [Tile.CorruptFloor, mkCanvas(TILE, TILE, paintTileCorrupt)],
-      [Tile.StairsDown, mkCanvas(TILE, TILE, paintStairsDown)],
-      [Tile.StairsUp, mkCanvas(TILE, TILE, paintStairsUp)],
-      [Tile.DoorLocked, mkCanvas(TILE, TILE, paintDoor)],
-      [Tile.Rubble, mkCanvas(TILE, TILE, paintRubble)],
+      [Tile.Wall, mkSprite(TILE, TILE, paintTileWall)],
+      [Tile.CorruptFloor, mkSprite(TILE, TILE, paintTileCorrupt)],
+      [Tile.StairsDown, mkSprite(TILE, TILE, paintStairsDown)],
+      [Tile.StairsUp, mkSprite(TILE, TILE, paintStairsUp)],
+      [Tile.DoorLocked, mkSprite(TILE, TILE, paintDoor)],
+      [Tile.Rubble, mkSprite(TILE, TILE, paintRubble)],
     ]);
     this.floorVariants = [0, 1, 2, 3].map((i) =>
-      mkCanvas(TILE, TILE, (c) => paintTileFloor(c, 0x9e3779 + i * 7919)),
+      mkSprite(TILE, TILE, (c) => paintTileFloor(c, 0x9e3779 + i * 7919)),
     );
     const itemIds: ItemId[] = [
       'healPotion', 'purityPotion', 'elixir', 'bomb', 'key',
       'sword1', 'sword2', 'sword3', 'bow', 'arrows',
       'tomeNova', 'tomeHaste', 'tomeStoneskin', 'tomeBlink',
     ];
-    this.items = new Map(itemIds.map((id) => [id, mkCanvas(10, 10, (c) => paintItem(c, id))]));
+    this.items = new Map(itemIds.map((id) => [id, mkScaled(10, 10, (c) => paintItem(c, id))]));
     const spellIds: SpellId[] = ['chaosBolt', 'nova', 'haste', 'stoneskin', 'cleanse', 'blink'];
-    this.spells = new Map(spellIds.map((id) => [id, mkCanvas(10, 10, (c) => paintSpell(c, id))]));
+    this.spells = new Map(spellIds.map((id) => [id, mkScaled(10, 10, (c) => paintSpell(c, id))]));
   }
 }
 
@@ -474,6 +715,15 @@ export class Renderer {
     this.ctx.fillRect(0, 0, VIEW_W, VIEW_H);
   }
 
+  /** Camera position snapped to the framebuffer grid; all world draws share it. */
+  private get camX(): number {
+    return snap(this.camera.x);
+  }
+
+  private get camY(): number {
+    return snap(this.camera.y);
+  }
+
   drawTiles(floor: FloorData, fog: Uint8Array, corruptionPoints: number, time: number): void {
     const { ctx, camera, atlas } = this;
     const x0 = Math.floor(camera.x / TILE);
@@ -491,9 +741,9 @@ export class Renderer {
         // corruption visually eats the floor
         if (t === Tile.Floor && (hash % 1000) / 1000 < decayFrac) t = Tile.CorruptFloor;
         const sprite = t === Tile.Floor ? atlas.floorVariants[hash % 4]! : atlas.tiles.get(t)!;
-        const sx = Math.round(tx * TILE - camera.x);
-        const sy = Math.round(ty * TILE - camera.y);
-        ctx.drawImage(sprite, sx, sy);
+        const sx = tx * TILE - this.camX;
+        const sy = ty * TILE - this.camY;
+        ctx.drawImage(sprite, sx, sy, TILE, TILE);
         if (t === Tile.CorruptFloor) {
           // pulse
           const pulse = 0.1 + 0.08 * Math.sin(time * 3 + hash);
@@ -518,21 +768,21 @@ export class Renderer {
     if (!this.visibleAt(fog, floorW, p.x + 5, p.y + 5)) return;
     const bob = Math.sin(time * 4 + p.x) * 1.5;
     const sprite = this.atlas.items.get(p.item)!;
-    this.ctx.drawImage(sprite, Math.round(p.x - this.camera.x), Math.round(p.y - this.camera.y + bob));
+    this.ctx.drawImage(sprite, snap(p.x - this.camX), snap(p.y - this.camY + bob), 10, 10);
   }
 
   drawEnemy(e: Enemy, fog: Uint8Array, floorW: number, time: number): void {
     if (!this.visibleAt(fog, floorW, e.cx, e.cy)) return;
-    const { ctx, camera } = this;
-    const sx = Math.round(e.x - camera.x);
-    const sy = Math.round(e.y - camera.y);
+    const { ctx } = this;
+    const sx = snap(e.x - this.camX);
+    const sy = snap(e.y - this.camY);
     // hit flash
     if (e.iframes > 0 && Math.floor(time * 30) % 2 === 0) return;
     const sprite =
       e.kind === 'boss'
         ? this.atlas.boss
         : (e.corrupted ? this.atlas.enemiesCorrupt : this.atlas.enemies)[e.kind];
-    ctx.drawImage(sprite, sx, sy);
+    ctx.drawImage(sprite, sx, sy, sprite.width / PX, sprite.height / PX);
     // telegraphs
     if (e.state === 'windup') {
       const blink = Math.floor(time * 12) % 2 === 0;
@@ -540,12 +790,6 @@ export class Renderer {
         ctx.fillStyle = 'rgba(255, 60, 60, 0.45)';
         ctx.fillRect(sx - 1, sy - 1, e.w + 2, e.h + 2);
       }
-    } else if (e.state === 'aim') {
-      ctx.strokeStyle = 'rgba(255, 60, 60, 0.5)';
-      ctx.beginPath();
-      ctx.moveTo(e.cx - camera.x, e.cy - camera.y);
-      // aim line toward player is drawn by playScene (knows player pos)
-      ctx.stroke();
     } else if (e.state === 'stunned') {
       ctx.fillStyle = '#ffe060';
       const wob = Math.sin(time * 10) * 3;
@@ -568,11 +812,9 @@ export class Renderer {
     // i-frame flicker
     if (p.iframes > 0 && Math.floor(time * 15) % 2 === 0) return;
     const sprite = this.atlas.player[p.facing];
-    this.ctx.drawImage(
-      sprite,
-      Math.round(p.cx - sprite.width / 2 - this.camera.x),
-      Math.round(p.y + p.h - sprite.height - this.camera.y),
-    );
+    const lw = sprite.width / PX;
+    const lh = sprite.height / PX;
+    this.ctx.drawImage(sprite, snap(p.cx - lw / 2 - this.camX), snap(p.y + p.h - lh - this.camY), lw, lh);
   }
 
   /** Aimed sword sweep: translucent wedge + bright edge around the aim direction. */

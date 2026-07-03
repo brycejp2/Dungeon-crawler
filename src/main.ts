@@ -1,7 +1,7 @@
 // Entry point: virtual-resolution canvas with integer scaling, input/audio wiring,
 // scene flow, boot to title.
 
-import { VIEW_W, VIEW_H } from './config';
+import { VIEW_W, VIEW_H, PX } from './config';
 import { Game } from './game';
 import type { Scene, SceneFlow, RunStats } from './game';
 import { WebAudio } from './audio';
@@ -13,17 +13,22 @@ import type { CharacterDef } from './character';
 const visible = document.getElementById('game') as HTMLCanvasElement;
 const visibleCtx = visible.getContext('2d')!;
 
-// Game renders to a fixed virtual canvas; we blit it up at integer scale.
+// Game renders to a supersampled virtual canvas (logical view x PX); code
+// draws in logical coordinates through a scaled context. We blit it up at
+// integer scale (or shrink to fit small windows).
 const virtual = document.createElement('canvas');
-virtual.width = VIEW_W;
-virtual.height = VIEW_H;
+virtual.width = VIEW_W * PX;
+virtual.height = VIEW_H * PX;
 const ctx = virtual.getContext('2d')!;
+ctx.scale(PX, PX);
+ctx.imageSmoothingEnabled = false;
 
 function resize(): void {
-  const scale = Math.max(1, Math.floor(Math.min(window.innerWidth / VIEW_W, window.innerHeight / VIEW_H)));
-  visible.width = VIEW_W * scale;
-  visible.height = VIEW_H * scale;
-  visibleCtx.imageSmoothingEnabled = false;
+  const fit = Math.min(window.innerWidth / virtual.width, window.innerHeight / virtual.height);
+  const scale = fit >= 1 ? Math.floor(fit) : fit; // integer upscale, fractional shrink-to-fit
+  visible.width = Math.round(virtual.width * scale);
+  visible.height = Math.round(virtual.height * scale);
+  visibleCtx.imageSmoothingEnabled = scale < 1;
 }
 window.addEventListener('resize', resize);
 resize();

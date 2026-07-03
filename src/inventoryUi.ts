@@ -129,7 +129,7 @@ export class InventoryWindow {
       ctx.font = '7px monospace';
       if (e.kind === 'item') {
         const sprite = atlas.items.get(e.id);
-        if (sprite) ctx.drawImage(sprite, PANEL_X + 8, y);
+        if (sprite) ctx.drawImage(sprite, PANEL_X + 8, y, 10, 10);
         ctx.fillStyle = i === this.cursor ? '#ffe8a0' : '#c8c8d8';
         ctx.fillText(`${ITEMS[e.id].name} x${inventory.count(e.id)}`, PANEL_X + 22, y + 2);
         ctx.fillStyle = '#707088';
@@ -137,7 +137,7 @@ export class InventoryWindow {
       } else {
         const def = SPELLS[e.id];
         const sprite = atlas.spells.get(e.id);
-        if (sprite) ctx.drawImage(sprite, PANEL_X + 8, y);
+        if (sprite) ctx.drawImage(sprite, PANEL_X + 8, y, 10, 10);
         const affordable = spellbook.canCast(e.id);
         ctx.fillStyle = i === this.cursor ? '#ffe8a0' : affordable ? '#a8c0ff' : '#586078';
         ctx.fillText(`${def.name} (${spellbook.costOf(e.id)} mp)`, PANEL_X + 22, y + 2);
