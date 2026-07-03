@@ -7,6 +7,8 @@ import {
   CORRUPT_VARIANT_TIER, CORRUPT_VARIANT_CHANCE, CORRUPT_HIT_POINTS,
   PLAYER_MAX_HP_CAP, VIEW_W, VIEW_H,
   ARROW_SPEED, ARROW_DAMAGE, BOW_COOLDOWN, BOMB_THROW_DIST,
+  BOLT_DAMAGE, BOLT_SPEED, NOVA_RADIUS, NOVA_DAMAGE,
+  HASTE_DURATION, STONESKIN_DURATION, BLINK_DIST, CLEANSE_CORRUPTION,
 } from './config';
 import type { Game, Scene, SceneFlow, RunStats } from './game';
 import type { InputState } from './input';
@@ -24,9 +26,13 @@ import {
 } from './corruption';
 import type { CorruptionState, MutationEffects } from './corruption';
 import { Inventory, ITEMS } from './items';
+import type { ItemId } from './items';
 import { Renderer, FOG_HIDDEN, FOG_EXPLORED, FOG_VISIBLE } from './render';
 import { Hud } from './hud';
 import type { AudioPort } from './audio';
+import { SPELLS, Spellbook, Hotbar } from './spells';
+import type { SpellId, HotbarEntry } from './spells';
+import { InventoryWindow } from './inventoryUi';
 
 interface Bomb {
   x: number;
@@ -38,6 +44,8 @@ interface BoomFx {
   x: number;
   y: number;
   age: number;
+  radius: number;
+  color: string; // 'r, g, b'
 }
 
 const BOMB_RADIUS = 30;
@@ -58,6 +66,9 @@ export class PlayScene implements Scene, World {
   private fog: Uint8Array;
   private corruption: CorruptionState = newCorruptionState();
   private inventory = new Inventory();
+  private spellbook = new Spellbook();
+  private hotbar = new Hotbar();
+  private window = new InventoryWindow();
   private fx: MutationEffects = computeMutationEffects([]);
   private hud = new Hud();
   private renderer: Renderer | null = null;
@@ -87,6 +98,11 @@ export class PlayScene implements Scene, World {
       this.floor.spawn.x * TILE + 3,
       this.floor.spawn.y * TILE + 2,
     );
+    // starting spells
+    this.spellbook.learn('chaosBolt');
+    this.spellbook.learn('cleanse');
+    this.hotbar.autoAssign({ kind: 'spell', id: 'chaosBolt' });
+    this.hotbar.autoAssign({ kind: 'spell', id: 'cleanse' });
     this.populateFloor();
   }
 
@@ -179,8 +195,21 @@ export class PlayScene implements Scene, World {
   // --- update ---
 
   update(dt: number, input: InputState, game: Game): void {
+    // Inventory/spellbook window pauses the world (the corruption clock included)
+    if (input.inventory || (this.window.open && input.pause)) this.window.toggle();
+    if (this.window.open) {
+      this.hud.update(dt);
+      const action = this.window.update(input, this.inventory, this.spellbook, this.hotbar);
+      if (action) {
+        this.window.toggle(); // close so the effect (throw/bolt aim) reads naturally
+        this.activateEntry(action.entry, game);
+      }
+      return;
+    }
+
     this.time += dt;
     this.hud.update(dt);
+    this.spellbook.regen(dt);
     if (this.flashT > 0) this.flashT -= dt;
 
     // Corruption is the clock: always ticking
@@ -205,8 +234,18 @@ export class PlayScene implements Scene, World {
     this.aimDirX = aim.x;
     this.aimDirY = aim.y;
 
-    if (input.cycleItem) this.inventory.cycle();
-    if (input.useItem) this.useSelectedItem(game);
+    // Hotbar: 1-9 direct, Q cycles the gamepad cursor, E activates it
+    if (input.cycleItem) this.hotbar.cycle();
+    if (input.hotkey !== null) {
+      const entry = this.hotbar.get(input.hotkey - 1);
+      if (entry) {
+        this.hotbar.selected = input.hotkey - 1;
+        this.activateEntry(entry, game);
+      }
+    } else if (input.useItem) {
+      const entry = this.hotbar.get(this.hotbar.selected);
+      if (entry) this.activateEntry(entry, game);
+    }
     if (input.fire) this.tryFireBow();
 
     // Enemies
@@ -278,9 +317,21 @@ export class PlayScene implements Scene, World {
     for (const p of this.pickups) {
       const rect = { x: p.x, y: p.y, w: 10, h: 10 };
       if (!aabbOverlap(rect, this.player.rect())) continue;
+      const def = ITEMS[p.item];
+      if (def.kind === 'tome') {
+        p.dead = true;
+        this.hud.push(def.pickupMessage);
+        if (def.spell && this.spellbook.learn(def.spell)) {
+          this.hotbar.autoAssign({ kind: 'spell', id: def.spell });
+          this.hud.push(SPELLS[def.spell].learnMessage);
+        }
+        this.audio.play('mutation');
+        continue;
+      }
       if (this.inventory.add(p.item)) {
         p.dead = true;
-        this.hud.push(ITEMS[p.item].pickupMessage);
+        this.hud.push(def.pickupMessage);
+        if (def.kind === 'consumable') this.hotbar.autoAssign({ kind: 'item', id: p.item });
         this.audio.play('pickup');
       }
     }
@@ -367,6 +418,15 @@ export class PlayScene implements Scene, World {
   }
 
   private damagePlayer(dmg: number, srcX: number, srcY: number, corrupted: boolean, game: Game): boolean {
+    // Stoneskin absorbs 1 damage per hit
+    if (this.player.stoneskinT > 0) dmg = Math.max(0, dmg - 1);
+    if (dmg === 0) {
+      if (this.player.invulnerable) return false;
+      // hit was fully absorbed: brief i-frames, no hurt state
+      this.player.iframes = 0.4;
+      this.audio.play('hit');
+      return true;
+    }
     if (!this.player.takeDamage(dmg)) return false;
     const kb = knockbackVector(srcX, srcY, this.player.cx, this.player.cy, this.fx.knockbackTakenMult);
     this.player.applyKnockback(kb.x, kb.y);
@@ -376,13 +436,21 @@ export class PlayScene implements Scene, World {
     if (corrupted) {
       const events = addCorruption(this.corruption, CORRUPT_HIT_POINTS, this.rng);
       this.handleCorruptionEvents(events, game);
+      if (!this.player.poisoned) {
+        this.player.applyPoison();
+        this.hud.push('Corruption burns in the wound. You are poisoned!');
+      }
     }
     return true;
   }
 
-  private useSelectedItem(game: Game): void {
-    const id = this.inventory.useSelected();
-    if (!id) return;
+  private activateEntry(entry: HotbarEntry, game: Game): void {
+    if (entry.kind === 'item') this.useItem(entry.id, game);
+    else this.castSpell(entry.id, game);
+  }
+
+  private useItem(id: ItemId, game: Game): void {
+    if (!this.inventory.use(id)) return;
     switch (id) {
       case 'healPotion': {
         const heal = Math.max(1, Math.round(4 * this.fx.healMult));
@@ -416,6 +484,74 @@ export class PlayScene implements Scene, World {
       }
       default:
         break;
+    }
+    void game;
+  }
+
+  private castSpell(id: SpellId, game: Game): void {
+    if (!this.spellbook.knows(id)) return;
+    if (!this.spellbook.spend(id)) {
+      this.hud.push('Not enough mana.');
+      return;
+    }
+    switch (id) {
+      case 'chaosBolt':
+        this.spawnProjectile({
+          x: this.player.cx + this.aimDirX * 6,
+          y: this.player.cy + this.aimDirY * 6,
+          vx: this.aimDirX * BOLT_SPEED,
+          vy: this.aimDirY * BOLT_SPEED,
+          size: 5,
+          damage: BOLT_DAMAGE,
+          corrupted: false,
+          friendly: true,
+          bolt: true,
+          dead: false,
+        });
+        this.audio.play('shoot');
+        break;
+      case 'nova': {
+        this.booms.push({ x: this.player.cx, y: this.player.cy, age: 0, radius: NOVA_RADIUS, color: '255, 208, 96' });
+        for (const e of this.enemies) {
+          if (e.dead) continue;
+          if (Math.hypot(e.cx - this.player.cx, e.cy - this.player.cy) <= NOVA_RADIUS + 4) {
+            e.iframes = 0;
+            e.takeDamage(NOVA_DAMAGE);
+            const kb = knockbackVector(this.player.cx, this.player.cy, e.cx, e.cy, this.fx.knockbackDealtMult * 1.3);
+            e.applyKnockback(kb.x, kb.y);
+          }
+        }
+        this.audio.play('boom');
+        break;
+      }
+      case 'haste':
+        this.player.hasteT = HASTE_DURATION;
+        this.hud.push('The world slows around you.');
+        this.audio.play('potion');
+        break;
+      case 'stoneskin':
+        this.player.stoneskinT = STONESKIN_DURATION;
+        this.hud.push('Your skin turns to living granite.');
+        this.audio.play('potion');
+        break;
+      case 'cleanse':
+        this.player.curePoison();
+        cleanse(this.corruption, CLEANSE_CORRUPTION * this.fx.purityMult);
+        this.hud.push('Cool light washes the venom from your veins.');
+        this.audio.play('potion');
+        break;
+      case 'blink': {
+        this.booms.push({ x: this.player.cx, y: this.player.cy, age: 0.15, radius: 12, color: '64, 192, 208' });
+        // step the full distance through moveAndCollide so the hitbox can never clip a wall
+        const steps = 8;
+        for (let i = 0; i < steps; i++) {
+          moveAndCollide(this.player, (this.aimDirX * BLINK_DIST) / steps, (this.aimDirY * BLINK_DIST) / steps, this);
+        }
+        this.player.iframes = Math.max(this.player.iframes, 0.2);
+        this.booms.push({ x: this.player.cx, y: this.player.cy, age: 0.1, radius: 12, color: '64, 192, 208' });
+        this.audio.play('stairs');
+        break;
+      }
     }
     void game;
   }
@@ -469,7 +605,7 @@ export class PlayScene implements Scene, World {
 
   private explodeBomb(b: Bomb, game: Game): void {
     this.audio.play('boom');
-    this.booms.push({ x: b.x, y: b.y, age: 0 });
+    this.booms.push({ x: b.x, y: b.y, age: 0, radius: BOMB_RADIUS, color: '255, 160, 40' });
     // damage entities in radius
     for (const e of this.enemies) {
       if (Math.hypot(e.cx - b.x, e.cy - b.y) <= BOMB_RADIUS + 4) {
@@ -566,22 +702,27 @@ export class PlayScene implements Scene, World {
     if (hitbox) r.drawSwingArc(hitbox);
 
     for (const fx of this.booms) {
-      r.drawBombFx(fx.x, fx.y, BOMB_RADIUS * (0.5 + fx.age * 2), 0.6 - fx.age * 1.5);
+      r.drawBombFx(fx.x, fx.y, fx.radius * (0.5 + fx.age * 2), 0.6 - fx.age * 1.5, fx.color);
     }
 
-    // aim indicator (only useful once you have something to aim)
-    if (this.inventory.hasBow || this.inventory.count('bomb') > 0) {
-      if (this.aimIsPointer) {
-        r.drawCrosshair(this.aimPointerWorldX, this.aimPointerWorldY);
-      } else {
-        r.drawAimArrow(this.player.cx, this.player.cy, this.aimDirX, this.aimDirY);
-      }
+    // aim indicator (bow, bombs, and aimed spells all use it)
+    if (this.aimIsPointer) {
+      r.drawCrosshair(this.aimPointerWorldX, this.aimPointerWorldY);
+    } else {
+      r.drawAimArrow(this.player.cx, this.player.cy, this.aimDirX, this.aimDirY);
     }
 
     r.drawCorruptionVignette(this.corruption.points, this.time);
     if (this.flashT > 0) r.flashScreen(this.flashColor, Math.min(0.5, this.flashT * 2));
 
-    this.hud.render(ctx, r.atlas, this.player, this.corruption, this.depth, this.inventory, this.time);
+    this.hud.render(
+      ctx, r.atlas, this.player, this.corruption, this.depth,
+      this.inventory, this.spellbook, this.hotbar, this.time,
+    );
+
+    if (this.window.open) {
+      this.window.render(ctx, r.atlas, this.inventory, this.spellbook, this.hotbar);
+    }
   }
 }
 

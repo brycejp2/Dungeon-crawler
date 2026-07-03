@@ -7,6 +7,7 @@ import type { FloorData, EnemyKind } from './dungeon';
 import type { Facing, Rect } from './combat';
 import type { Player, Enemy, Projectile, Pickup } from './entities';
 import type { ItemId } from './items';
+import type { SpellId } from './spells';
 
 export const FOG_HIDDEN = 0;
 export const FOG_EXPLORED = 1;
@@ -240,6 +241,21 @@ function paintItem(c: CanvasRenderingContext2D, item: ItemId): void {
       c.fillStyle = '#1a1a1a';
       c.fillRect(3, 3, 2, 2);
       break;
+    case 'tomeNova':
+    case 'tomeHaste':
+    case 'tomeStoneskin':
+    case 'tomeBlink': {
+      const spine = item === 'tomeNova' ? '#d04020' : item === 'tomeHaste' ? '#e0c030' : item === 'tomeStoneskin' ? '#808898' : '#40c0d0';
+      c.fillStyle = '#3a2a4a';
+      c.fillRect(1, 1, 8, 9);
+      c.fillStyle = spine;
+      c.fillRect(1, 1, 2, 9);
+      c.fillStyle = '#d8c8f0';
+      c.fillRect(4, 3, 4, 1);
+      c.fillRect(4, 5, 4, 1);
+      c.fillRect(4, 7, 3, 1);
+      break;
+    }
     case 'bow':
       c.strokeStyle = '#8a6a2a';
       c.lineWidth = 1.5;
@@ -280,6 +296,71 @@ function paintItem(c: CanvasRenderingContext2D, item: ItemId): void {
   }
 }
 
+function paintSpell(c: CanvasRenderingContext2D, id: SpellId): void {
+  // 10x10 spell icons
+  switch (id) {
+    case 'chaosBolt':
+      c.strokeStyle = '#ff30d0';
+      c.lineWidth = 1.5;
+      c.beginPath();
+      c.moveTo(7, 1);
+      c.lineTo(3, 5);
+      c.lineTo(6, 5);
+      c.lineTo(2, 9);
+      c.stroke();
+      break;
+    case 'nova':
+      c.strokeStyle = '#ffd060';
+      c.lineWidth = 1;
+      c.beginPath();
+      c.arc(5, 5, 3, 0, Math.PI * 2);
+      c.stroke();
+      for (const a of [0, 1, 2, 3]) {
+        const ang = (a / 4) * Math.PI * 2 + 0.4;
+        c.beginPath();
+        c.moveTo(5 + Math.cos(ang) * 3.5, 5 + Math.sin(ang) * 3.5);
+        c.lineTo(5 + Math.cos(ang) * 5, 5 + Math.sin(ang) * 5);
+        c.stroke();
+      }
+      break;
+    case 'haste':
+      c.strokeStyle = '#e0c030';
+      c.lineWidth = 1.5;
+      for (const off of [0, 3]) {
+        c.beginPath();
+        c.moveTo(2 + off, 2);
+        c.lineTo(6 + off, 5);
+        c.lineTo(2 + off, 8);
+        c.stroke();
+      }
+      break;
+    case 'stoneskin':
+      c.fillStyle = '#808898';
+      c.fillRect(2, 1, 6, 5);
+      c.fillRect(3, 6, 4, 2);
+      c.fillRect(4, 8, 2, 1);
+      c.fillStyle = '#a8b0c0';
+      c.fillRect(3, 2, 2, 2);
+      break;
+    case 'cleanse':
+      c.fillStyle = '#40e080';
+      c.fillRect(4, 1, 2, 3);
+      c.fillRect(3, 3, 4, 4);
+      c.fillRect(4, 7, 2, 2);
+      c.fillStyle = '#c0ffd8';
+      c.fillRect(4, 3, 1, 2);
+      break;
+    case 'blink':
+      c.strokeStyle = '#40c0d0';
+      c.lineWidth = 1;
+      c.strokeRect(1.5, 3.5, 3, 4);
+      c.setLineDash([1, 1]);
+      c.strokeRect(6.5, 2.5, 3, 4);
+      c.setLineDash([]);
+      break;
+  }
+}
+
 export class SpriteAtlas {
   player: Record<Facing, HTMLCanvasElement>;
   enemies: Record<Exclude<EnemyKind, 'boss'>, HTMLCanvasElement>;
@@ -288,6 +369,7 @@ export class SpriteAtlas {
   tiles: Map<Tile, HTMLCanvasElement>;
   floorVariants: HTMLCanvasElement[];
   items: Map<ItemId, HTMLCanvasElement>;
+  spells: Map<SpellId, HTMLCanvasElement>;
 
   constructor() {
     this.player = {
@@ -318,8 +400,14 @@ export class SpriteAtlas {
     this.floorVariants = [0, 1, 2, 3].map((i) =>
       mkCanvas(TILE, TILE, (c) => paintTileFloor(c, 0x9e3779 + i * 7919)),
     );
-    const itemIds: ItemId[] = ['healPotion', 'purityPotion', 'elixir', 'bomb', 'key', 'sword1', 'sword2', 'sword3', 'bow', 'arrows'];
+    const itemIds: ItemId[] = [
+      'healPotion', 'purityPotion', 'elixir', 'bomb', 'key',
+      'sword1', 'sword2', 'sword3', 'bow', 'arrows',
+      'tomeNova', 'tomeHaste', 'tomeStoneskin', 'tomeBlink',
+    ];
     this.items = new Map(itemIds.map((id) => [id, mkCanvas(10, 10, (c) => paintItem(c, id))]));
+    const spellIds: SpellId[] = ['chaosBolt', 'nova', 'haste', 'stoneskin', 'cleanse', 'blink'];
+    this.spells = new Map(spellIds.map((id) => [id, mkCanvas(10, 10, (c) => paintSpell(c, id))]));
   }
 }
 
@@ -480,6 +568,20 @@ export class Renderer {
 
   drawProjectile(pr: Projectile): void {
     const { ctx, camera } = this;
+    if (pr.bolt) {
+      // chaos bolt: glowing magenta orb with a bright core
+      const sx = Math.round(pr.x - camera.x);
+      const sy = Math.round(pr.y - camera.y);
+      ctx.fillStyle = 'rgba(255, 48, 208, 0.35)';
+      ctx.beginPath();
+      ctx.arc(sx, sy, pr.size, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ff30d0';
+      ctx.fillRect(sx - 2, sy - 2, 4, 4);
+      ctx.fillStyle = '#ffd0f0';
+      ctx.fillRect(sx - 1, sy - 1, 2, 2);
+      return;
+    }
     if (pr.friendly) {
       // arrow: shaft along the flight direction with a bright head
       const len = Math.hypot(pr.vx, pr.vy) || 1;
@@ -541,9 +643,9 @@ export class Renderer {
     ctx.stroke();
   }
 
-  drawBombFx(x: number, y: number, radius: number, alpha: number): void {
+  drawBombFx(x: number, y: number, radius: number, alpha: number, color = '255, 160, 40'): void {
     const { ctx, camera } = this;
-    ctx.fillStyle = `rgba(255, 160, 40, ${alpha.toFixed(3)})`;
+    ctx.fillStyle = `rgba(${color}, ${alpha.toFixed(3)})`;
     ctx.beginPath();
     ctx.arc(x - camera.x, y - camera.y, radius, 0, Math.PI * 2);
     ctx.fill();

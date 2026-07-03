@@ -64,8 +64,8 @@ export class TitleScene implements Scene {
         text, y: 104 + i * 12, font: '8px monospace', color: '#9a90b0',
       })),
       { text: 'WASD/Arrows move   Space attack   Shift dodge', y: 162, font: '8px monospace', color: '#707088' },
-      { text: 'Mouse aim + Click shoot bow   E use item   Q swap', y: 174, font: '8px monospace', color: '#707088' },
-      { text: 'Gamepad: sticks move/aim, A attack, RT shoot', y: 186, font: '8px monospace', color: '#707088' },
+      { text: 'Mouse aim + Click shoot   1-9 items & spells   I inventory', y: 174, font: '8px monospace', color: '#707088' },
+      { text: 'Gamepad: sticks move/aim, A attack, RT shoot, Y/X hotbar', y: 186, font: '8px monospace', color: '#707088' },
     ];
     if (Math.floor(this.time * 1.5) % 2 === 0) {
       lines.push({ text: '- press any key to descend -', y: 208, font: '9px monospace', color: '#ffd040' });

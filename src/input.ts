@@ -13,6 +13,10 @@ export interface InputState {
   pause: boolean; // just pressed
   fire: boolean; // just pressed (mouse click / RT / RB) — ranged attack
   anyKey: boolean; // just pressed (menus)
+  hotkey: number | null; // 1-9 just pressed — activate hotbar slot
+  inventory: boolean; // just pressed — toggle inventory/spellbook window
+  menuUp: boolean; // just pressed (up edge / dpad) — menu navigation
+  menuDown: boolean; // just pressed
   // aiming
   pointerX: number; // virtual-canvas coords (mouse)
   pointerY: number;
@@ -24,7 +28,9 @@ export interface InputState {
 
 type Action =
   | 'up' | 'down' | 'left' | 'right'
-  | 'attack' | 'dodge' | 'useItem' | 'cycleItem' | 'interact' | 'pause' | 'fire';
+  | 'attack' | 'dodge' | 'useItem' | 'cycleItem' | 'interact' | 'pause' | 'fire'
+  | 'inventory'
+  | 'hk1' | 'hk2' | 'hk3' | 'hk4' | 'hk5' | 'hk6' | 'hk7' | 'hk8' | 'hk9';
 
 const KEYMAP: Record<string, Action> = {
   ArrowUp: 'up', KeyW: 'up',
@@ -34,12 +40,18 @@ const KEYMAP: Record<string, Action> = {
   Space: 'attack', KeyJ: 'attack', KeyZ: 'attack',
   ShiftLeft: 'dodge', ShiftRight: 'dodge', KeyK: 'dodge', KeyX: 'dodge',
   KeyE: 'useItem', KeyL: 'useItem', KeyC: 'useItem',
-  KeyQ: 'cycleItem', Tab: 'cycleItem',
+  KeyQ: 'cycleItem',
   KeyF: 'interact', Enter: 'interact',
   Escape: 'pause', KeyP: 'pause',
+  KeyI: 'inventory', Tab: 'inventory',
+  Digit1: 'hk1', Digit2: 'hk2', Digit3: 'hk3',
+  Digit4: 'hk4', Digit5: 'hk5', Digit6: 'hk6',
+  Digit7: 'hk7', Digit8: 'hk8', Digit9: 'hk9',
 };
 
-// Standard gamepad mapping: A=0 B=1 X=2 Y=3 LB=4 RB=5 LT=6 RT=7 Start=9
+const HOTKEY_ACTIONS: Action[] = ['hk1', 'hk2', 'hk3', 'hk4', 'hk5', 'hk6', 'hk7', 'hk8', 'hk9'];
+
+// Standard gamepad mapping: A=0 B=1 X=2 Y=3 LB=4 RB=5 LT=6 RT=7 Select=8 Start=9 DUp=12 DDown=13
 const PAD_BUTTONS: [number, Action][] = [
   [0, 'attack'],
   [1, 'dodge'],
@@ -48,7 +60,10 @@ const PAD_BUTTONS: [number, Action][] = [
   [4, 'interact'],
   [5, 'fire'],
   [7, 'fire'],
+  [8, 'inventory'],
   [9, 'pause'],
+  [12, 'up'],
+  [13, 'down'],
 ];
 
 const STICK_DEADZONE = 0.25;
@@ -116,6 +131,10 @@ export class InputHub {
       pause: this.pressed.has('pause'),
       fire: this.pressed.has('fire'),
       anyKey: this.anyPressed,
+      hotkey: this.pressedHotkey(),
+      inventory: this.pressed.has('inventory'),
+      menuUp: this.pressed.has('up'),
+      menuDown: this.pressed.has('down'),
       pointerX: this.pointerX,
       pointerY: this.pointerY,
       hasPointer: this.hasPointer,
@@ -127,6 +146,13 @@ export class InputHub {
     this.pressed.clear();
     this.anyPressed = false;
     return state;
+  }
+
+  private pressedHotkey(): number | null {
+    for (let i = 0; i < HOTKEY_ACTIONS.length; i++) {
+      if (this.pressed.has(HOTKEY_ACTIONS[i]!)) return i + 1;
+    }
+    return null;
   }
 
   private pollGamepad(state: InputState): void {
@@ -175,6 +201,9 @@ export class InputHub {
           case 'interact': state.interact = true; break;
           case 'pause': state.pause = true; break;
           case 'fire': state.fire = true; break;
+          case 'inventory': state.inventory = true; break;
+          case 'up': state.menuUp = true; break;
+          case 'down': state.menuDown = true; break;
           default: break;
         }
         state.anyKey = true;

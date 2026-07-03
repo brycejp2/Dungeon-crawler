@@ -22,11 +22,33 @@ npm run dev      # open the printed localhost URL
 | Shoot bow | Left click (aims at cursor) | RT / RB (aims with right stick) |
 | Aim | Mouse cursor | Right stick |
 | Dodge (i-frames) | Shift / K / X | B |
-| Use item | E / L / C | X |
-| Swap item | Q / Tab | Y |
+| Hotbar slots 1–9 | 1–9 | Y cycles, X activates |
+| Inventory / spellbook | I / Tab | Select |
 
 Bombs are thrown toward your aim (up to ~4 tiles, stopping at walls) instead of
 dropped at your feet.
+
+## Hotbar & spellbook
+
+Everything usable lives on a **9-slot hotbar**: consumables and spells auto-assign to
+the first free slot as you find them, and pressing its number uses/casts it instantly.
+Open the **pack & spellbook window** (I or Tab — the world pauses) to review what you
+carry and know; select an entry and press **1–9 to rebind it** to any slot, or
+E/Enter/click to use it directly from the window.
+
+Spells cost **mana** (blue bar under your hearts, regenerates slowly):
+
+| Spell | Cost | Effect |
+| --- | --- | --- |
+| Chaos Bolt *(known from start)* | 2 | Aimed bolt, 3 damage |
+| Cleanse *(known from start)* | 2 | Cure poison, purge 8 corruption |
+| Haste *(tome, floor 2)* | 3 | +40% move speed for 8s |
+| Nova *(tome, floor 3)* | 4 | Radial blast, 2 damage + knockback |
+| Stoneskin *(tome, floor 4)* | 3 | Absorb 1 damage per hit for 8s |
+| Blink *(tome, floor 5)* | 2 | Teleport toward your aim |
+
+Beware: corrupted enemies now **poison** you on hit — a damage-over-time that ignores
+i-frames. Cleanse is the cure.
 
 ## The run
 
@@ -53,7 +75,7 @@ abstractions so the game can ship to Steam via Electron/Tauri and to mobile via
 Capacitor without touching game logic.
 
 ```bash
-npm test         # 48 unit tests: dungeon connectivity, corruption math, combat, rng
+npm test         # 73 unit tests: dungeon connectivity, corruption math, combat, spells, rng
 npm run build    # typecheck + production bundle in dist/
 ```
 

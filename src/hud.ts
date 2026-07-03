@@ -1,14 +1,20 @@
-// HUD: hearts, corruption meter, floor number, inventory bar, ADOM-flavor message log.
-// All screen-space, drawn last.
+// HUD: hearts, mana, corruption meter, floor number, 9-slot hotbar, buff/poison
+// indicators, ADOM-flavor message log. All screen-space, drawn last.
 
 import { VIEW_W, VIEW_H, CORRUPTION_MAX, CORRUPTION_THRESHOLDS } from './config';
 import type { Player } from './entities';
 import type { CorruptionState } from './corruption';
 import type { Inventory } from './items';
 import type { SpriteAtlas } from './render';
+import { SPELLS } from './spells';
+import type { Spellbook, Hotbar, HotbarEntry } from './spells';
 
 const FONT = '7px monospace';
+const FONT_TINY = '6px monospace';
 const FONT_BIG = '10px monospace';
+
+export const HOTBAR_SLOT_W = 17;
+export const HOTBAR_X = 40;
 
 interface Message {
   text: string;
@@ -35,6 +41,8 @@ export class Hud {
     corruption: CorruptionState,
     depth: number,
     inventory: Inventory,
+    spellbook: Spellbook,
+    hotbar: Hotbar,
     time: number,
   ): void {
     ctx.save();
@@ -45,6 +53,34 @@ export class Hud {
     for (let i = 0; i < hearts; i++) {
       const filled = player.hp - i * 2; // 2 = full, 1 = half, <=0 empty
       this.drawHeart(ctx, 5 + i * 9, 5, filled >= 2 ? 'full' : filled === 1 ? 'half' : 'empty');
+    }
+
+    // --- mana bar under hearts ---
+    const manaW = 54;
+    ctx.fillStyle = '#101018';
+    ctx.fillRect(4, 14, manaW + 2, 5);
+    ctx.fillStyle = '#3868e0';
+    ctx.fillRect(5, 15, Math.round(manaW * (spellbook.mana / spellbook.maxMana)), 3);
+    ctx.strokeStyle = '#606078';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(4.5, 14.5, manaW + 1, 4);
+
+    // --- status indicators (poison, buffs) right of the bars ---
+    let statusX = 66;
+    ctx.font = FONT_TINY;
+    if (player.poisoned) {
+      ctx.fillStyle = Math.floor(time * 3) % 2 === 0 ? '#40e080' : '#208048';
+      ctx.fillText('POISON', statusX, 14);
+      statusX += 30;
+    }
+    if (player.hasteT > 0) {
+      ctx.fillStyle = '#e0c030';
+      ctx.fillText(`HASTE ${Math.ceil(player.hasteT)}`, statusX, 14);
+      statusX += 34;
+    }
+    if (player.stoneskinT > 0) {
+      ctx.fillStyle = '#a8b0c0';
+      ctx.fillText(`STONE ${Math.ceil(player.stoneskinT)}`, statusX, 14);
     }
 
     // --- corruption meter, top-right ---
@@ -58,14 +94,12 @@ export class Hud {
     ctx.fillStyle = `rgba(${Math.round(200 * pulse + 55)}, 0, ${Math.round(180 * pulse + 40)}, 1)`;
     ctx.fillRect(meterX, meterY, Math.round(meterW * frac), 6);
     ctx.strokeStyle = '#606078';
-    ctx.lineWidth = 1;
     ctx.strokeRect(meterX - 0.5, meterY - 0.5, meterW + 1, 7);
     for (const t of CORRUPTION_THRESHOLDS) {
       const tx = meterX + Math.round((t / CORRUPTION_MAX) * meterW);
       ctx.fillStyle = '#a0a0b8';
       ctx.fillRect(tx, meterY - 2, 1, 2);
     }
-    // skull at the doom end
     this.drawSkull(ctx, VIEW_W - 14, 3);
 
     // --- floor number, top-center ---
@@ -75,52 +109,50 @@ export class Hud {
     ctx.fillText(`B${depth}`, VIEW_W / 2, 4);
     ctx.textAlign = 'left';
 
-    // --- inventory bar, bottom ---
-    const slots = inventory.consumables();
-    const barY = VIEW_H - 16;
-    ctx.fillStyle = 'rgba(10, 10, 18, 0.75)';
-    ctx.fillRect(0, barY - 2, VIEW_W, 18);
-    // weapon
+    // --- hotbar, bottom ---
+    const barY = VIEW_H - 18;
+    ctx.fillStyle = 'rgba(10, 10, 18, 0.8)';
+    ctx.fillRect(0, barY - 3, VIEW_W, 21);
+    // weapon + bow to the left of the numbered slots
     const weaponSprite = atlas.items.get(inventory.weapon);
-    if (weaponSprite) ctx.drawImage(weaponSprite, 6, barY + 1);
+    if (weaponSprite) ctx.drawImage(weaponSprite, 5, barY + 2);
     ctx.font = FONT;
-    ctx.fillStyle = '#c8c8d8';
-    let x = 20;
-    // bow + arrow count
     if (inventory.hasBow) {
       const bowSprite = atlas.items.get('bow');
       if (bowSprite) {
         ctx.globalAlpha = inventory.arrows > 0 ? 1 : 0.35;
-        ctx.drawImage(bowSprite, x, barY + 1);
+        ctx.drawImage(bowSprite, 19, barY + 2);
         ctx.globalAlpha = 1;
       }
-      ctx.fillText(`${inventory.arrows}`, x + 9, barY + 6);
-      x += 22;
+      ctx.fillStyle = '#c8c8d8';
+      ctx.fillText(`${inventory.arrows}`, 27, barY + 8);
     }
-    for (const slot of slots) {
-      const sprite = atlas.items.get(slot.id);
-      if (slot.selected && slot.count > 0) {
-        ctx.strokeStyle = '#ffd040';
-        ctx.strokeRect(x - 1.5, barY - 0.5, 13, 13);
-      }
-      if (sprite) {
-        ctx.globalAlpha = slot.count > 0 ? 1 : 0.25;
-        ctx.drawImage(sprite, x, barY + 1);
-        ctx.globalAlpha = 1;
-      }
-      if (slot.count > 0) ctx.fillText(`${slot.count}`, x + 9, barY + 6);
-      x += 22;
+    // 9 numbered slots
+    for (let i = 0; i < 9; i++) {
+      const x = HOTBAR_X + i * HOTBAR_SLOT_W;
+      const entry = hotbar.get(i);
+      ctx.fillStyle = 'rgba(30, 30, 46, 0.9)';
+      ctx.fillRect(x, barY, 15, 15);
+      ctx.strokeStyle = i === hotbar.selected ? '#ffd040' : '#4a4a62';
+      ctx.strokeRect(x + 0.5, barY + 0.5, 14, 14);
+      ctx.font = FONT_TINY;
+      ctx.fillStyle = '#707088';
+      ctx.fillText(`${i + 1}`, x + 1, barY + 1);
+      if (!entry) continue;
+      this.drawEntryIcon(ctx, atlas, entry, x + 3, barY + 4, inventory, spellbook);
     }
     if (inventory.hasKey) {
       const keySprite = atlas.items.get('key');
-      if (keySprite) ctx.drawImage(keySprite, x + 4, barY + 1);
+      if (keySprite) ctx.drawImage(keySprite, HOTBAR_X + 9 * HOTBAR_SLOT_W + 4, barY + 2);
     }
+    ctx.font = FONT_TINY;
     ctx.fillStyle = '#707088';
-    ctx.fillText('Click:shoot  E:use  Q:swap  Shift:dodge', VIEW_W - 172, barY + 4);
+    ctx.fillText('1-9 use', VIEW_W - 42, barY + 1);
+    ctx.fillText('I: bag', VIEW_W - 42, barY + 8);
 
     // --- message log above the bar ---
     ctx.font = FONT;
-    let my = VIEW_H - 28;
+    let my = VIEW_H - 30;
     for (let i = this.messages.length - 1; i >= 0; i--) {
       const m = this.messages[i]!;
       const alpha = m.age < 2.4 ? 1 : 1 - (m.age - 2.4) / 0.6;
@@ -130,6 +162,42 @@ export class Hud {
     }
 
     ctx.restore();
+  }
+
+  private drawEntryIcon(
+    ctx: CanvasRenderingContext2D,
+    atlas: SpriteAtlas,
+    entry: HotbarEntry,
+    x: number,
+    y: number,
+    inventory: Inventory,
+    spellbook: Spellbook,
+  ): void {
+    if (entry.kind === 'item') {
+      const count = inventory.count(entry.id);
+      const sprite = atlas.items.get(entry.id);
+      if (sprite) {
+        ctx.globalAlpha = count > 0 ? 1 : 0.25;
+        ctx.drawImage(sprite, x, y);
+        ctx.globalAlpha = 1;
+      }
+      if (count > 0) {
+        ctx.font = FONT_TINY;
+        ctx.fillStyle = '#e8e8f0';
+        ctx.fillText(`${count}`, x + 7, y + 5);
+      }
+    } else {
+      const canCast = spellbook.canCast(entry.id);
+      const sprite = atlas.spells.get(entry.id);
+      if (sprite) {
+        ctx.globalAlpha = canCast ? 1 : 0.3;
+        ctx.drawImage(sprite, x, y);
+        ctx.globalAlpha = 1;
+      }
+      ctx.font = FONT_TINY;
+      ctx.fillStyle = canCast ? '#68a0ff' : '#485068';
+      ctx.fillText(`${SPELLS[entry.id].cost}`, x + 8, y + 5);
+    }
   }
 
   private drawHeart(ctx: CanvasRenderingContext2D, x: number, y: number, kind: 'full' | 'half' | 'empty'): void {

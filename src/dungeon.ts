@@ -395,6 +395,11 @@ function tryGenerate(seed: number, depth: number): FloorData | null {
   if (depth === 3) placeItem('sword2');
   if (depth === 6) placeItem('sword3');
   if (depth === 2 || depth === 5) placeItem('bow'); // floor 5 is the catch-up copy
+  // spell tomes: one new school roughly every other floor
+  if (depth === 2) placeItem('tomeHaste');
+  if (depth === 3) placeItem('tomeNova');
+  if (depth === 4) placeItem('tomeStoneskin');
+  if (depth === 5) placeItem('tomeBlink');
   if (depth >= 2) {
     const arrowBundles = rng.int(1, 2);
     for (let i = 0; i < arrowBundles; i++) placeItem('arrows');

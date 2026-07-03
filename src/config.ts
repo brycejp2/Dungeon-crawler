@@ -47,6 +47,23 @@ export const ARROW_DAMAGE = 2;
 export const BOW_COOLDOWN = 0.45; // seconds
 export const BOMB_THROW_DIST = 64; // px max lob distance
 
+// --- Magic ---
+export const MANA_MAX = 10;
+export const MANA_REGEN = 0.45; // per second
+export const BOLT_DAMAGE = 3;
+export const BOLT_SPEED = 250; // px/s
+export const NOVA_RADIUS = 42; // px
+export const NOVA_DAMAGE = 2;
+export const HASTE_DURATION = 8; // seconds
+export const HASTE_MULT = 1.4;
+export const STONESKIN_DURATION = 8; // seconds
+export const BLINK_DIST = 56; // px
+export const CLEANSE_CORRUPTION = 8; // corruption points purged by Cleanse
+
+// --- Poison (afflicts the player; corrupted enemies inflict it) ---
+export const POISON_TICKS = 3;
+export const POISON_INTERVAL = 1.5; // seconds between ticks
+
 // --- Enemies ---
 export const ENEMY_BASE_COUNT = 4;
 export const ENEMY_PER_DEPTH = 2;

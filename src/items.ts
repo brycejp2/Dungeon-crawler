@@ -1,10 +1,13 @@
 // Item definitions and the player's inventory.
 // Use-effects are applied by playScene (they need world access); this file is data + container.
 
+import type { SpellId } from './spells';
+
 export type ItemId =
   | 'sword1' | 'sword2' | 'sword3'
   | 'bow' | 'arrows'
   | 'healPotion' | 'purityPotion' | 'elixir' | 'bomb'
+  | 'tomeNova' | 'tomeHaste' | 'tomeStoneskin' | 'tomeBlink'
   | 'key';
 
 export const ARROWS_PER_BUNDLE = 5;
@@ -18,8 +21,9 @@ export interface WeaponStats {
 export interface ItemDef {
   id: ItemId;
   name: string;
-  kind: 'weapon' | 'consumable' | 'key' | 'tool' | 'ammo';
+  kind: 'weapon' | 'consumable' | 'key' | 'tool' | 'ammo' | 'tome';
   weapon?: WeaponStats;
+  spell?: SpellId; // for tomes: the spell taught
   pickupMessage: string;
 }
 
@@ -63,13 +67,29 @@ export const ITEMS: Record<ItemId, ItemDef> = {
     id: 'bomb', name: 'Bomb', kind: 'consumable',
     pickupMessage: 'You pick up a bomb.',
   },
+  tomeNova: {
+    id: 'tomeNova', name: 'Tome of Nova', kind: 'tome', spell: 'nova',
+    pickupMessage: 'A scorched tome, humming with force.',
+  },
+  tomeHaste: {
+    id: 'tomeHaste', name: 'Tome of Haste', kind: 'tome', spell: 'haste',
+    pickupMessage: 'A featherlight tome, pages fluttering.',
+  },
+  tomeStoneskin: {
+    id: 'tomeStoneskin', name: 'Tome of Stoneskin', kind: 'tome', spell: 'stoneskin',
+    pickupMessage: 'A tome bound in granite scales.',
+  },
+  tomeBlink: {
+    id: 'tomeBlink', name: 'Tome of Blink', kind: 'tome', spell: 'blink',
+    pickupMessage: 'A tome that is never quite where you left it.',
+  },
   key: {
     id: 'key', name: 'Chaos Key', kind: 'key',
     pickupMessage: 'You found the floor\'s key!',
   },
 };
 
-const CONSUMABLE_ORDER: ItemId[] = ['healPotion', 'purityPotion', 'elixir', 'bomb'];
+export const CONSUMABLE_ORDER: ItemId[] = ['healPotion', 'purityPotion', 'elixir', 'bomb'];
 
 export class Inventory {
   weapon: ItemId = 'sword1';
@@ -77,7 +97,6 @@ export class Inventory {
   hasBow = false;
   arrows = 0;
   private counts = new Map<ItemId, number>();
-  private selectedIdx = 0;
 
   get weaponStats(): WeaponStats {
     return ITEMS[this.weapon].weapon!;
@@ -114,49 +133,14 @@ export class Inventory {
       return true;
     }
     this.counts.set(item, this.count(item) + 1);
-    if (this.selected === null) this.selectFirstAvailable();
     return true;
   }
 
-  /** Currently selected consumable, or null if none held. */
-  get selected(): ItemId | null {
-    const id = CONSUMABLE_ORDER[this.selectedIdx]!;
-    return this.count(id) > 0 ? id : this.firstAvailable();
-  }
-
-  private firstAvailable(): ItemId | null {
-    for (const id of CONSUMABLE_ORDER) {
-      if (this.count(id) > 0) return id;
-    }
-    return null;
-  }
-
-  private selectFirstAvailable(): void {
-    for (let i = 0; i < CONSUMABLE_ORDER.length; i++) {
-      if (this.count(CONSUMABLE_ORDER[i]!) > 0) {
-        this.selectedIdx = i;
-        return;
-      }
-    }
-  }
-
-  cycle(): void {
-    for (let step = 1; step <= CONSUMABLE_ORDER.length; step++) {
-      const idx = (this.selectedIdx + step) % CONSUMABLE_ORDER.length;
-      if (this.count(CONSUMABLE_ORDER[idx]!) > 0) {
-        this.selectedIdx = idx;
-        return;
-      }
-    }
-  }
-
-  /** Consume the selected item; returns which item was used or null. */
-  useSelected(): ItemId | null {
-    const id = this.selected;
-    if (!id) return null;
-    this.counts.set(id, this.count(id) - 1);
-    if (this.count(id) === 0) this.selectFirstAvailable();
-    return id;
+  /** Consume one of the item; returns false if none held. */
+  use(item: ItemId): boolean {
+    if (this.count(item) <= 0) return false;
+    this.counts.set(item, this.count(item) - 1);
+    return true;
   }
 
   useKey(): boolean {
@@ -165,12 +149,10 @@ export class Inventory {
     return true;
   }
 
-  /** For the HUD inventory bar. */
-  consumables(): { id: ItemId; count: number; selected: boolean }[] {
-    return CONSUMABLE_ORDER.map((id) => ({
-      id,
-      count: this.count(id),
-      selected: this.selected === id,
-    }));
+  /** Consumables currently held (for the inventory window). */
+  held(): { id: ItemId; count: number }[] {
+    return CONSUMABLE_ORDER
+      .map((id) => ({ id, count: this.count(id) }))
+      .filter((e) => e.count > 0);
   }
 }

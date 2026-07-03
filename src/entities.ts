@@ -8,6 +8,7 @@ import {
   KNOCKBACK_DECAY, KNOCKBACK_INPUT_LOCK, ENEMY_HITSTUN,
   AGGRO_RADIUS, AGGRO_LOSE_TIME, PROJECTILE_SPEED, DEPTH_SCALE,
   CORRUPT_TIER_SPAWN_SCALE,
+  HASTE_MULT, POISON_TICKS, POISON_INTERVAL,
 } from './config';
 import type { Rect, Facing } from './combat';
 import { swingHitbox } from './combat';
@@ -27,6 +28,7 @@ export interface Projectile {
   damage: number;
   corrupted: boolean;
   friendly: boolean; // fired by the player: hits enemies, never the player
+  bolt?: boolean; // chaos bolt visuals (glowing orb instead of arrow)
   dead: boolean;
 }
 
@@ -163,9 +165,28 @@ export class Player extends Actor {
   dodgeCooldown = 0;
   bowCooldown = 0;
   attackHeld = false;
+  // buffs (seconds remaining)
+  hasteT = 0;
+  stoneskinT = 0;
+  // poison status (inflicted by corrupted enemies, cured by Cleanse)
+  poisonTicks = 0;
+  poisonTimer = 0;
 
   constructor(x: number, y: number) {
     super(x, y, PLAYER_W, PLAYER_H, PLAYER_START_HP, PLAYER_START_HP);
+  }
+
+  get poisoned(): boolean {
+    return this.poisonTicks > 0;
+  }
+
+  applyPoison(): void {
+    this.poisonTicks = POISON_TICKS;
+    this.poisonTimer = POISON_INTERVAL;
+  }
+
+  curePoison(): void {
+    this.poisonTicks = 0;
   }
 
   get dodging(): boolean {
@@ -188,6 +209,23 @@ export class Player extends Actor {
     this.stepKnockback(dt, world);
     if (this.dodgeCooldown > 0) this.dodgeCooldown -= dt;
     if (this.bowCooldown > 0) this.bowCooldown -= dt;
+    if (this.hasteT > 0) this.hasteT -= dt;
+    if (this.stoneskinT > 0) this.stoneskinT -= dt;
+
+    // Poison DoT: ticks ignore i-frames (it's already in your blood)
+    if (this.poisonTicks > 0) {
+      this.poisonTimer -= dt;
+      if (this.poisonTimer <= 0) {
+        this.poisonTicks--;
+        this.poisonTimer = POISON_INTERVAL;
+        this.hp -= 1;
+        if (this.hp <= 0) {
+          this.hp = 0;
+          this.dead = true;
+          return;
+        }
+      }
+    }
 
     // Swing lifecycle
     if (this.swing) {
@@ -213,7 +251,7 @@ export class Player extends Actor {
       const len = Math.hypot(mx, my);
       mx /= len;
       my /= len;
-      const speed = PLAYER_SPEED * fx.speedMult;
+      const speed = PLAYER_SPEED * fx.speedMult * (this.hasteT > 0 ? HASTE_MULT : 1);
       moveAndCollide(this, mx * speed * dt, my * speed * dt, world);
       // Facing follows dominant axis
       if (Math.abs(input.moveX) > Math.abs(input.moveY)) {
