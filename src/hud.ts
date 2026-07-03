@@ -1,12 +1,13 @@
 // HUD: hearts, mana, corruption meter, floor number, 9-slot hotbar, buff/poison
 // indicators, ADOM-flavor message log. All screen-space, drawn last.
 
-import { VIEW_W, VIEW_H, CORRUPTION_MAX, CORRUPTION_THRESHOLDS } from './config';
+import { VIEW_W, VIEW_H, CORRUPTION_MAX, CORRUPTION_THRESHOLDS, LEVEL_CAP } from './config';
 import type { Player } from './entities';
 import type { CorruptionState } from './corruption';
 import type { Inventory } from './items';
 import type { SpriteAtlas } from './render';
 import type { Spellbook, Hotbar, HotbarEntry } from './spells';
+import { xpToNext, type Progression } from './progression';
 
 const FONT = '7px monospace';
 const FONT_TINY = '6px monospace';
@@ -42,6 +43,7 @@ export class Hud {
     inventory: Inventory,
     spellbook: Spellbook,
     hotbar: Hotbar,
+    progression: Progression,
     time: number,
   ): void {
     ctx.save();
@@ -63,6 +65,17 @@ export class Hud {
     ctx.strokeStyle = '#606078';
     ctx.lineWidth = 1;
     ctx.strokeRect(4.5, 14.5, manaW + 1, 4);
+
+    // --- xp bar + level under the mana bar ---
+    const atCap = progression.level >= LEVEL_CAP;
+    const xpFrac = atCap ? 1 : Math.min(1, progression.xp / xpToNext(progression.level));
+    ctx.fillStyle = '#101018';
+    ctx.fillRect(4, 20, manaW + 2, 4);
+    ctx.fillStyle = atCap ? '#ffd040' : '#c8a030';
+    ctx.fillRect(5, 21, Math.round(manaW * xpFrac), 2);
+    ctx.font = FONT_TINY;
+    ctx.fillStyle = '#ffd040';
+    ctx.fillText(`Lv ${progression.level}`, 4, 26);
 
     // --- status indicators (poison, buffs) right of the bars ---
     let statusX = 66;

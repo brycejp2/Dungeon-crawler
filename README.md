@@ -82,6 +82,10 @@ Order**, which absorbs your first mutation harmlessly.
 - **8 floors**, rooms-and-corridors, always fully connected, seeded and deterministic.
 - **Enemies**: goblin chasers (telegraphed lunges), cultist archers (kite and shoot),
   erratic bats — plus corrupted variants once the world decays far enough.
+- **Leveling**: kills grant experience (more for tougher, deeper, and corrupted foes;
+  the gold bar under your mana tracks progress). Each level adds half a heart, +1 max
+  mana (refilled on the spot), and a small heal; every third level sharpens your blade
+  with +1 melee damage. Level cap 10 — growth is the counterweight to corruption.
 - **Corruption**: rises passively (faster on deeper floors), +2 when corrupted enemies
   touch you. Thresholds at 20/40/60/80 each grant a random mutation. Purity potions
   (−25) and Elixirs of Order (−50) push it back; descending stairs cleanses a little.

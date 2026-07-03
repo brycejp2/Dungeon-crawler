@@ -16,6 +16,7 @@ export interface Scene {
 export interface RunStats {
   identity: string; // "Kara the Elf Mage"
   depth: number;
+  level: number;
   kills: number;
   corruptionPoints: number;
   mutationCount: number;

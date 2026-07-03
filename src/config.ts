@@ -28,7 +28,7 @@ export const PLAYER_SPEED = 78; // px/s
 export const PLAYER_W = 10;
 export const PLAYER_H = 12;
 export const PLAYER_START_HP = 6; // half-hearts (3 hearts)
-export const PLAYER_MAX_HP_CAP = 12;
+export const PLAYER_MAX_HP_CAP = 16; // 8 hearts — leaves room for level growth
 export const PLAYER_IFRAMES = 0.8; // seconds
 export const DODGE_DIST = 90; // px
 export const DODGE_TIME = 0.18; // seconds
@@ -63,6 +63,13 @@ export const HASTE_MULT = 1.4;
 export const STONESKIN_DURATION = 8; // seconds
 export const BLINK_DIST = 56; // px
 export const CLEANSE_CORRUPTION = 8; // corruption points purged by Cleanse
+
+// --- Leveling ---
+export const LEVEL_CAP = 10;
+export const XP_LEVEL_BASE = 10; // xp needed from level 1 -> 2
+export const XP_LEVEL_GROWTH = 10; // extra xp needed per subsequent level
+export const XP_DEPTH_SCALE = 0.2; // kill xp bonus per depth beyond 1
+export const LEVELUP_HEAL = 2; // half-hearts restored on level up
 
 // --- Poison (afflicts the player; corrupted enemies inflict it) ---
 export const POISON_TICKS = 3;

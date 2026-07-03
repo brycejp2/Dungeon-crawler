@@ -26,6 +26,7 @@ import {
 } from './corruption';
 import type { CorruptionState, MutationEffects } from './corruption';
 import { buildCharacter, identityOf, randomCharacter, RACES } from './character';
+import { newProgression, grantXp, xpForKill, type LevelUpBoon } from './progression';
 import type { CharacterDef } from './character';
 import { Inventory, ITEMS } from './items';
 import type { ItemId } from './items';
@@ -75,6 +76,9 @@ export class PlayScene implements Scene, World {
   private baseFx: MutationEffects = neutralEffects();
   private baseMaxHp: number;
   private fx: MutationEffects;
+  private progression = newProgression();
+  private levelHpBonus = 0; // half-hearts from level-ups
+  private levelDamageBonus = 0; // permanent melee bonus from level-ups
   private hud = new Hud();
   private renderer: Renderer | null = null;
   private time = 0;
@@ -211,6 +215,7 @@ export class PlayScene implements Scene, World {
     const stats: RunStats = {
       identity: identityOf(this.character),
       depth: this.depth,
+      level: this.progression.level,
       kills: this.kills,
       corruptionPoints: Math.round(this.corruption.points),
       mutationCount: this.corruption.mutations.length,
@@ -284,7 +289,7 @@ export class PlayScene implements Scene, World {
     const arc = this.player.activeSwing();
     if (arc && this.player.swing) {
       const reach = this.inventory.weaponStats.reach;
-      const dmg = swingDamage(this.inventory.weaponStats.damage, this.fx.damageBonus);
+      const dmg = swingDamage(this.inventory.weaponStats.damage, this.fx.damageBonus + this.levelDamageBonus);
       for (const e of this.enemies) {
         if (e.dead || this.player.swing.hitIds.has(e)) continue;
         if (!swingArcHits(arc.cx, arc.cy, arc.dirX, arc.dirY, reach, e.rect())) continue;
@@ -384,10 +389,12 @@ export class PlayScene implements Scene, World {
       }
     }
 
-    // Reap the dead
+    // Reap the dead: kills grant experience
     for (const e of this.enemies) {
       if (e.dead) {
         this.kills++;
+        const boons = grantXp(this.progression, xpForKill(e.kind, e.corrupted, this.depth));
+        this.applyLevelUps(boons);
         if (e.kind === 'boss') {
           this.audio.play('victory');
           this.endRun(game, 'Slew the Herald of Decay', true);
@@ -447,10 +454,32 @@ export class PlayScene implements Scene, World {
       this.flashT = 0.35;
       this.flashColor = '#ff20d0';
       this.fx = mergeEffects(this.baseFx, computeMutationEffects(this.corruption.mutations));
-      // apply max-hp change, clamping current hp
-      const newMax = Math.min(PLAYER_MAX_HP_CAP, Math.max(2, PLAYER_START_HP + this.fx.maxHpDelta));
-      this.player.maxHp = newMax;
-      this.player.hp = Math.min(this.player.hp, newMax);
+      this.recomputeMaxHp();
+    }
+  }
+
+  /** Max hp = base + mutation delta + level growth, clamped; current hp follows the cap down. */
+  private recomputeMaxHp(): void {
+    const newMax = Math.min(
+      PLAYER_MAX_HP_CAP,
+      Math.max(2, PLAYER_START_HP + this.fx.maxHpDelta + this.levelHpBonus),
+    );
+    this.player.maxHp = newMax;
+    this.player.hp = Math.min(this.player.hp, newMax);
+  }
+
+  private applyLevelUps(boons: LevelUpBoon[]): void {
+    for (const b of boons) {
+      this.levelHpBonus += b.maxHpDelta;
+      this.levelDamageBonus += b.damageDelta;
+      this.recomputeMaxHp();
+      this.player.hp = Math.min(this.player.maxHp, this.player.hp + b.heal);
+      this.spellbook.maxMana += b.maxManaDelta;
+      this.spellbook.mana = this.spellbook.maxMana; // level-ups refill mana
+      this.hud.push(b.message);
+      this.audio.play('levelup');
+      this.flashT = 0.3;
+      this.flashColor = '#ffd040';
     }
   }
 
@@ -761,7 +790,7 @@ export class PlayScene implements Scene, World {
 
     this.hud.render(
       ctx, r.atlas, this.player, this.corruption, this.depth,
-      this.inventory, this.spellbook, this.hotbar, this.time,
+      this.inventory, this.spellbook, this.hotbar, this.progression, this.time,
     );
 
     if (this.window.open) {

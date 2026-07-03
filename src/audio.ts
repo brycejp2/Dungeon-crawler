@@ -3,7 +3,8 @@
 
 export type SfxId =
   | 'swing' | 'hit' | 'hurt' | 'pickup' | 'stairs' | 'potion'
-  | 'mutation' | 'unlock' | 'die' | 'bossRoar' | 'victory' | 'shoot' | 'boom';
+  | 'mutation' | 'unlock' | 'die' | 'bossRoar' | 'victory' | 'shoot' | 'boom'
+  | 'levelup';
 
 export interface AudioPort {
   play(sfx: SfxId): void;
@@ -56,6 +57,11 @@ const SFX: Record<SfxId, Note[]> = {
   ],
   shoot: [{ freq: 950, dur: 0.07, type: 'square', slide: 500, vol: 0.1 }],
   boom: [{ freq: 110, dur: 0.35, type: 'sawtooth', slide: 30, vol: 0.35 }],
+  levelup: [
+    { freq: 523, dur: 0.09, type: 'square', vol: 0.18 },
+    { freq: 659, dur: 0.09, type: 'square', delay: 0.09, vol: 0.18 },
+    { freq: 880, dur: 0.22, type: 'square', delay: 0.18, vol: 0.2 },
+  ],
 };
 
 export class WebAudio implements AudioPort {
