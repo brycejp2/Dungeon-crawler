@@ -95,7 +95,7 @@ export class GameOverScene implements Scene {
       { text: 'Y O U   D I E D', y: 40, font: 'bold 18px monospace', color: '#e02848' },
       { text: s.identity, y: 66, font: '9px monospace', color: '#e8d8f0' },
       { text: s.cause, y: 80, font: '9px monospace', color: '#c8b0c0' },
-      { text: `Floor reached: B${s.depth}`, y: 104, font: '8px monospace', color: '#9a90b0' },
+      { text: s.depth > 0 ? `Gate floor reached: B${s.depth}` : 'Never braved the Chaos Gate', y: 104, font: '8px monospace', color: '#9a90b0' },
       { text: `Level ${s.level}   Kills: ${s.kills}`, y: 116, font: '8px monospace', color: '#9a90b0' },
       { text: `Corruption: ${s.corruptionPoints}%  (${s.mutationCount} mutations)`, y: 128, font: '8px monospace', color: '#9a90b0' },
       { text: `Time: ${fmtTime(s.timeSec)}`, y: 140, font: '8px monospace', color: '#9a90b0' },

@@ -17,6 +17,21 @@ export enum Tile {
   StairsUp = 4,
   Rubble = 5,
   CorruptFloor = 6, // visual variant, walkable
+  // Overworld terrain
+  Grass = 7,
+  Forest = 8, // walkable, does not block sight
+  Water = 9, // solid
+  Mountain = 10, // solid, blocks sight
+  Road = 11,
+  CorruptLand = 12, // walkable, chaos-touched terrain
+  // Overworld structures
+  HutWall = 13, // solid, blocks sight
+  HutFloor = 14,
+  Shrine = 15, // solid; interact while adjacent to pray
+  Healer = 16, // solid; interact while adjacent to be healed
+  GateEntrance = 17, // step on to enter the Chaos Gate
+  CaveEntrance = 18, // the Haunted Barrow
+  MineEntrance = 19, // the Old Mine
 }
 
 export interface Room {
@@ -55,16 +70,24 @@ export function inRoom(r: Room, x: number, y: number): boolean {
   return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
 }
 
+const SOLID_TILES = new Set<Tile>([
+  Tile.Wall, Tile.DoorLocked, Tile.Rubble,
+  Tile.Water, Tile.Mountain, Tile.HutWall, Tile.Shrine, Tile.Healer,
+]);
+
+const SIGHT_BLOCKING_TILES = new Set<Tile>([
+  Tile.Wall, Tile.DoorLocked, Tile.Rubble, Tile.Mountain, Tile.HutWall,
+]);
+
 /** Solid for movement. Locked doors and rubble block until removed. */
 export function isSolid(t: Tile): boolean {
-  return t === Tile.Wall || t === Tile.DoorLocked || t === Tile.Rubble;
+  return SOLID_TILES.has(t);
 }
 
 /** Walkable for connectivity checks; doorsSolid treats locked doors as walls. */
-function isPassable(t: Tile, doorsSolid: boolean): boolean {
-  if (t === Tile.Wall || t === Tile.Rubble) return false;
+export function isPassable(t: Tile, doorsSolid: boolean): boolean {
   if (t === Tile.DoorLocked) return !doorsSolid;
-  return true;
+  return !SOLID_TILES.has(t);
 }
 
 /**
@@ -119,8 +142,7 @@ export function hasLineOfSight(
   while (x !== x1 || y !== y1) {
     if (x !== x0 || y !== y0) {
       if (x < 0 || y < 0 || x >= w || y >= h) return false;
-      const t = tiles[y * w + x] as Tile;
-      if (t === Tile.Wall || t === Tile.DoorLocked || t === Tile.Rubble) return false;
+      if (SIGHT_BLOCKING_TILES.has(tiles[y * w + x] as Tile)) return false;
     }
     const e2 = 2 * err;
     if (e2 > -dy) {
@@ -210,17 +232,28 @@ function enemyWeights(depth: number): { kinds: EnemyKind[]; weights: number[] } 
   return { kinds, weights };
 }
 
-export function generateFloor(seed: number, depth: number): FloorData {
+export interface FloorOpts {
+  /** Place the boss on this floor. Default: depth >= FINAL_DEPTH (the Chaos Gate). */
+  bossFloor?: boolean;
+  /** No stairs down (dungeon bottom) even without a boss. Default: same as boss floor. */
+  lastFloor?: boolean;
+  /** Use the main-dungeon fixed loot schedule (tomes, swords, bow). Default true. */
+  schedule?: boolean;
+  /** Extra guaranteed loot dropped in the far room (side-dungeon treasure). */
+  extraLoot?: ItemId[];
+}
+
+export function generateFloor(seed: number, depth: number, opts: FloorOpts = {}): FloorData {
   // Regenerate with derived sub-seeds until valid (validation failures are rare).
   const master = new Rng((seed ^ (depth * 0x9e3779b9)) >>> 0);
   for (let attempt = 0; attempt < 50; attempt++) {
-    const floor = tryGenerate(master.subSeed(), depth);
+    const floor = tryGenerate(master.subSeed(), depth, opts);
     if (floor) return floor;
   }
   throw new Error(`floor generation failed for seed=${seed} depth=${depth}`);
 }
 
-function tryGenerate(seed: number, depth: number): FloorData | null {
+function tryGenerate(seed: number, depth: number, opts: FloorOpts): FloorData | null {
   const rng = new Rng(seed);
   const w = MAP_W;
   const h = MAP_H;
@@ -289,7 +322,8 @@ function tryGenerate(seed: number, depth: number): FloorData | null {
   }
   if (!stairsRoom) return null;
 
-  const isBossFloor = depth >= FINAL_DEPTH;
+  const isBossFloor = opts.bossFloor ?? depth >= FINAL_DEPTH;
+  const isLastFloor = opts.lastFloor ?? isBossFloor;
   // Boss floor: fight happens in the largest room instead of descending further
   if (isBossFloor) {
     let biggest = rooms[0]!;
@@ -303,7 +337,7 @@ function tryGenerate(seed: number, depth: number): FloorData | null {
   const taken = new Set<number>([spawn.y * w + spawn.x, stairsCenter.y * w + stairsCenter.x]);
   tiles[spawn.y * w + spawn.x] = Tile.StairsUp;
   let downStairs: Pt | null = null;
-  if (!isBossFloor) {
+  if (!isLastFloor) {
     downStairs = stairsCenter;
     tiles[stairsCenter.y * w + stairsCenter.x] = Tile.StairsDown;
   }
@@ -391,21 +425,31 @@ function tryGenerate(seed: number, depth: number): FloorData | null {
   const healCount = rng.int(1, 2);
   for (let i = 0; i < healCount; i++) placeItem('healPotion');
   if (depth >= 2 && rng.chance(0.65)) placeItem('purityPotion');
-  if (depth >= 4 && rng.chance(0.3)) placeItem('elixir');
-  if (depth === 3) placeItem('sword2');
-  if (depth === 6) placeItem('sword3');
-  if (depth === 2 || depth === 5) placeItem('bow'); // floor 5 is the catch-up copy
-  // spell tomes: one new school roughly every other floor
-  if (depth === 2) placeItem('tomeHaste');
-  if (depth === 3) placeItem('tomeNova');
-  if (depth === 4) placeItem('tomeStoneskin');
-  if (depth === 5) placeItem('tomeBlink');
+  if (opts.schedule ?? true) {
+    if (depth >= 4 && rng.chance(0.3)) placeItem('elixir');
+    if (depth === 3) placeItem('sword2');
+    if (depth === 6) placeItem('sword3');
+    if (depth === 2 || depth === 5) placeItem('bow'); // floor 5 is the catch-up copy
+    // spell tomes: one new school roughly every other floor
+    if (depth === 2) placeItem('tomeHaste');
+    if (depth === 3) placeItem('tomeNova');
+    if (depth === 4) placeItem('tomeStoneskin');
+    if (depth === 5) placeItem('tomeBlink');
+  }
   if (depth >= 2) {
     const arrowBundles = rng.int(1, 2);
     for (let i = 0; i < arrowBundles; i++) placeItem('arrows');
   }
   const bombCount = rng.int(0, 2);
   for (let i = 0; i < bombCount; i++) placeItem('bomb');
+  // Side-dungeon treasure: pile the promised loot in the far (stairs) room
+  if (opts.extraLoot) {
+    for (const item of opts.extraLoot) {
+      const pos = randomRoomTile(rng, stairsRoom, taken, w, tiles);
+      if (pos) itemSpawns.push({ item, x: pos.x, y: pos.y });
+      else placeItem(item);
+    }
+  }
   if (keyPos) itemSpawns.push({ item: 'key', x: keyPos.x, y: keyPos.y });
 
   return { tiles, w, h, depth, rooms, spawn, downStairs, doors, keyPos, enemySpawns, itemSpawns };

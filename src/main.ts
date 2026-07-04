@@ -49,7 +49,7 @@ const flow: SceneFlow = {
     new PlayScene(
       flow,
       devSeed ?? Math.floor(Math.random() * 0xffffffff),
-      devFloor ?? 1,
+      devFloor ?? 0, // 0 = begin on the overworld; ?floor=N jumps into the Chaos Gate
       character, // undefined => random character (dev shortcut runs)
     ),
   gameOver: (stats: RunStats): Scene => new GameOverScene(stats, flow),

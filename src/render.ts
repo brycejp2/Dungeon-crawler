@@ -455,6 +455,224 @@ function paintRubble(c: CanvasRenderingContext2D): void {
   c.fillRect(13, 29, 2, 1);
 }
 
+// --- overworld terrain painters (32x32 framebuffer px) ---
+
+function paintGrass(c: CanvasRenderingContext2D, seedHash: number): void {
+  c.fillStyle = '#1d3a20';
+  c.fillRect(0, 0, T2, T2);
+  let s = seedHash;
+  const next = () => (s = (s * 1103515245 + 12345) & 0x7fffffff);
+  c.fillStyle = '#2a5230';
+  for (let i = 0; i < 10; i++) {
+    next();
+    c.fillRect(s % T2, (s >> 5) % (T2 - 2), 1, 2); // grass blades
+  }
+  c.fillStyle = '#173018';
+  for (let i = 0; i < 4; i++) {
+    next();
+    c.fillRect(s % T2, (s >> 5) % T2, 2, 1);
+  }
+}
+
+function paintForest(c: CanvasRenderingContext2D): void {
+  paintGrass(c, 0x51ab3);
+  // two chunky canopies with trunks
+  const tree = (x: number, y: number): void => {
+    c.fillStyle = '#4a2e16';
+    c.fillRect(x + 5, y + 10, 3, 4);
+    c.fillStyle = '#14401c';
+    c.fillRect(x + 1, y + 3, 11, 8);
+    c.fillRect(x + 3, y, 7, 5);
+    c.fillStyle = '#1d5426';
+    c.fillRect(x + 3, y + 4, 5, 4);
+    c.fillRect(x + 5, y + 1, 3, 3);
+  };
+  tree(2, 2);
+  tree(16, 14);
+}
+
+function paintWater(c: CanvasRenderingContext2D): void {
+  c.fillStyle = '#122a4a';
+  c.fillRect(0, 0, T2, T2);
+  c.fillStyle = '#1a3a62';
+  c.fillRect(0, 0, T2, 3);
+  c.fillStyle = '#2a4e7e';
+  c.fillRect(3, 8, 9, 2); // wave glints
+  c.fillRect(18, 15, 10, 2);
+  c.fillRect(8, 24, 8, 2);
+  c.fillStyle = '#3a628e';
+  c.fillRect(4, 8, 4, 1);
+  c.fillRect(19, 15, 4, 1);
+}
+
+function paintMountain(c: CanvasRenderingContext2D): void {
+  c.fillStyle = '#2e2c38';
+  c.fillRect(0, 0, T2, T2);
+  c.fillStyle = '#4a4856';
+  c.fillRect(2, 12, 13, 18); // left peak mass
+  c.fillRect(14, 6, 16, 24); // right peak mass
+  c.fillStyle = '#5e5c6e';
+  c.fillRect(4, 12, 6, 4); // lit faces
+  c.fillRect(17, 6, 7, 5);
+  c.fillStyle = '#8e8ea0';
+  c.fillRect(19, 6, 5, 2); // snow cap
+  c.fillStyle = '#232130';
+  c.fillRect(9, 18, 3, 12); // shadow cleft
+  c.fillRect(24, 14, 3, 16);
+}
+
+function paintRoad(c: CanvasRenderingContext2D): void {
+  c.fillStyle = '#4a3d2a';
+  c.fillRect(0, 0, T2, T2);
+  c.fillStyle = '#5a4b34';
+  c.fillRect(1, 1, T2 - 2, T2 - 2);
+  c.fillStyle = '#6a5a40';
+  c.fillRect(4, 5, 4, 2); // worn stones
+  c.fillRect(16, 12, 5, 2);
+  c.fillRect(8, 22, 4, 2);
+  c.fillRect(22, 26, 5, 2);
+  c.fillStyle = '#3e3222';
+  c.fillRect(12, 7, 3, 1);
+  c.fillRect(24, 18, 3, 1);
+}
+
+function paintCorruptLand(c: CanvasRenderingContext2D): void {
+  c.fillStyle = '#241428';
+  c.fillRect(0, 0, T2, T2);
+  c.fillStyle = '#3a1c42';
+  c.fillRect(3, 5, 1, 3); // sickly blades
+  c.fillRect(11, 12, 1, 3);
+  c.fillRect(21, 4, 1, 3);
+  c.fillRect(26, 20, 1, 3);
+  c.fillRect(7, 24, 1, 3);
+  c.fillStyle = '#8a20a0';
+  c.fillRect(16, 16, 3, 3); // pustule
+  c.fillStyle = '#d040e8';
+  c.fillRect(17, 17, 1, 1);
+}
+
+function paintHutWall(c: CanvasRenderingContext2D): void {
+  c.fillStyle = '#4a2e16';
+  c.fillRect(0, 0, T2, T2);
+  c.fillStyle = '#5e3c20';
+  c.fillRect(0, 2, T2, 5); // timber courses
+  c.fillRect(0, 11, T2, 5);
+  c.fillRect(0, 20, T2, 5);
+  c.fillStyle = '#3a2410';
+  c.fillRect(0, 8, T2, 2);
+  c.fillRect(0, 17, T2, 2);
+  c.fillRect(0, 26, T2, 2);
+  c.fillStyle = '#6e4a28';
+  c.fillRect(3, 3, 8, 2);
+  c.fillRect(18, 12, 9, 2);
+}
+
+function paintHutFloor(c: CanvasRenderingContext2D): void {
+  c.fillStyle = '#6a5236';
+  c.fillRect(0, 0, T2, T2);
+  c.fillStyle = '#7a6042';
+  c.fillRect(0, 0, T2, 7);
+  c.fillRect(0, 16, T2, 7);
+  c.fillStyle = '#54412a';
+  c.fillRect(0, 7, T2, 1);
+  c.fillRect(0, 15, T2, 1);
+  c.fillRect(0, 23, T2, 1);
+  c.fillRect(10, 0, 1, 7);
+  c.fillRect(22, 16, 1, 7);
+}
+
+function paintShrine(c: CanvasRenderingContext2D): void {
+  paintGrass(c, 0x77aa1);
+  c.fillStyle = '#8e8ea0';
+  c.fillRect(12, 4, 8, 24); // obelisk
+  c.fillRect(9, 26, 14, 4); // base
+  c.fillStyle = '#b0b0c4';
+  c.fillRect(12, 4, 3, 22); // lit edge
+  c.fillStyle = '#40e0d0';
+  c.fillRect(14, 9, 4, 4); // glowing rune
+  c.fillRect(15, 15, 2, 6);
+  c.fillStyle = '#c0fff8';
+  c.fillRect(15, 10, 2, 2);
+}
+
+function paintHealer(c: CanvasRenderingContext2D): void {
+  paintGrass(c, 0x3bee7);
+  // healer's tent
+  c.fillStyle = '#8a4a3a';
+  c.fillRect(4, 10, 24, 18);
+  c.fillStyle = '#a05a46';
+  c.fillRect(4, 10, 24, 4);
+  c.fillStyle = '#6e3a2c';
+  c.fillRect(14, 18, 6, 10); // entrance flap
+  c.fillStyle = '#e8e8f0';
+  c.fillRect(13, 4, 8, 8); // sign
+  c.fillStyle = '#e02848';
+  c.fillRect(16, 5, 2, 6); // red cross
+  c.fillRect(14, 7, 6, 2);
+}
+
+function paintGateEntrance(c: CanvasRenderingContext2D): void {
+  paintCorruptLand(c);
+  c.fillStyle = '#1a0a22';
+  c.fillRect(4, 2, 24, 28); // arch mass
+  c.fillStyle = '#000005';
+  c.fillRect(8, 6, 16, 24); // void mouth
+  c.fillStyle = '#8a20a0';
+  c.fillRect(4, 2, 24, 2); // arch rim
+  c.fillRect(4, 2, 2, 28);
+  c.fillRect(26, 2, 2, 28);
+  c.fillStyle = '#ff30d0';
+  c.fillRect(14, 12, 4, 2); // swirling chaos
+  c.fillRect(12, 18, 3, 2);
+  c.fillRect(18, 22, 3, 2);
+}
+
+function paintCaveEntrance(c: CanvasRenderingContext2D): void {
+  paintGrass(c, 0x9c1d5);
+  c.fillStyle = '#4a4856';
+  c.fillRect(2, 6, 28, 24); // rock face
+  c.fillStyle = '#5e5c6e';
+  c.fillRect(2, 6, 28, 4);
+  c.fillStyle = '#0a0a12';
+  c.fillRect(10, 14, 12, 16); // cave mouth
+  c.fillStyle = '#232130';
+  c.fillRect(8, 12, 16, 3);
+}
+
+function paintMineEntrance(c: CanvasRenderingContext2D): void {
+  paintGrass(c, 0x4f2e9);
+  c.fillStyle = '#3a3a48';
+  c.fillRect(4, 8, 24, 22); // hillside
+  c.fillStyle = '#0e0c14';
+  c.fillRect(11, 14, 10, 16); // shaft
+  c.fillStyle = '#5a3a1e';
+  c.fillRect(9, 12, 14, 3); // lintel beam
+  c.fillRect(9, 12, 3, 18); // posts
+  c.fillRect(20, 12, 3, 18);
+  c.fillStyle = '#6e4a28';
+  c.fillRect(9, 12, 14, 1);
+}
+
+function paintVillager(c: CanvasRenderingContext2D): void {
+  // logical 12x14 -> 24x28 peasant: tan tunic, hood down
+  c.fillStyle = '#4a2e16';
+  c.fillRect(4, 24, 6, 4); // boots
+  c.fillRect(14, 24, 6, 4);
+  c.fillStyle = '#8a7048';
+  c.fillRect(2, 12, 20, 12); // tunic
+  c.fillStyle = '#9c8258';
+  c.fillRect(3, 12, 18, 8);
+  c.fillStyle = '#5c4830';
+  c.fillRect(3, 20, 18, 2); // rope belt
+  c.fillStyle = '#e8c090';
+  c.fillRect(5, 2, 14, 11); // head
+  c.fillStyle = '#6a4a2a';
+  c.fillRect(4, 0, 16, 4); // hair
+  c.fillStyle = '#1a1a2e';
+  c.fillRect(8, 7, 2, 3); // eyes
+  c.fillRect(14, 7, 2, 3);
+}
+
 function paintItem(c: CanvasRenderingContext2D, item: ItemId): void {
   // 10x10 icons
   switch (item) {
@@ -622,8 +840,10 @@ export class SpriteAtlas {
   enemies: Record<Exclude<EnemyKind, 'boss'>, HTMLCanvasElement>;
   enemiesCorrupt: Record<Exclude<EnemyKind, 'boss'>, HTMLCanvasElement>;
   boss: HTMLCanvasElement;
+  villager: HTMLCanvasElement;
   tiles: Map<Tile, HTMLCanvasElement>;
   floorVariants: HTMLCanvasElement[];
+  grassVariants: HTMLCanvasElement[];
   items: Map<ItemId, HTMLCanvasElement>;
   spells: Map<SpellId, HTMLCanvasElement>;
 
@@ -645,6 +865,7 @@ export class SpriteAtlas {
       bat: tintMagenta(this.enemies.bat),
     };
     this.boss = mkSprite(26, 26, paintBoss);
+    this.villager = mkSprite(12, 14, paintVillager);
     this.tiles = new Map<Tile, HTMLCanvasElement>([
       [Tile.Wall, mkSprite(TILE, TILE, paintTileWall)],
       [Tile.CorruptFloor, mkSprite(TILE, TILE, paintTileCorrupt)],
@@ -652,9 +873,24 @@ export class SpriteAtlas {
       [Tile.StairsUp, mkSprite(TILE, TILE, paintStairsUp)],
       [Tile.DoorLocked, mkSprite(TILE, TILE, paintDoor)],
       [Tile.Rubble, mkSprite(TILE, TILE, paintRubble)],
+      [Tile.Forest, mkSprite(TILE, TILE, paintForest)],
+      [Tile.Water, mkSprite(TILE, TILE, paintWater)],
+      [Tile.Mountain, mkSprite(TILE, TILE, paintMountain)],
+      [Tile.Road, mkSprite(TILE, TILE, paintRoad)],
+      [Tile.CorruptLand, mkSprite(TILE, TILE, paintCorruptLand)],
+      [Tile.HutWall, mkSprite(TILE, TILE, paintHutWall)],
+      [Tile.HutFloor, mkSprite(TILE, TILE, paintHutFloor)],
+      [Tile.Shrine, mkSprite(TILE, TILE, paintShrine)],
+      [Tile.Healer, mkSprite(TILE, TILE, paintHealer)],
+      [Tile.GateEntrance, mkSprite(TILE, TILE, paintGateEntrance)],
+      [Tile.CaveEntrance, mkSprite(TILE, TILE, paintCaveEntrance)],
+      [Tile.MineEntrance, mkSprite(TILE, TILE, paintMineEntrance)],
     ]);
     this.floorVariants = [0, 1, 2, 3].map((i) =>
       mkSprite(TILE, TILE, (c) => paintTileFloor(c, 0x9e3779 + i * 7919)),
+    );
+    this.grassVariants = [0, 1, 2].map((i) =>
+      mkSprite(TILE, TILE, (c) => paintGrass(c, 0x1234f + i * 104729)),
     );
     const itemIds: ItemId[] = [
       'healPotion', 'purityPotion', 'elixir', 'bomb', 'key',
@@ -670,6 +906,14 @@ export class SpriteAtlas {
 export class Camera {
   x = 0;
   y = 0;
+  private mapW = MAP_W;
+  private mapH = MAP_H;
+
+  /** Set the current map size in tiles; the camera clamps to it. */
+  setBounds(w: number, h: number): void {
+    this.mapW = w;
+    this.mapH = h;
+  }
 
   snapTo(px: number, py: number): void {
     this.x = px - VIEW_W / 2;
@@ -687,8 +931,8 @@ export class Camera {
   }
 
   private clamp(): void {
-    this.x = Math.max(0, Math.min(MAP_W * TILE - VIEW_W, this.x));
-    this.y = Math.max(0, Math.min(MAP_H * TILE - VIEW_H, this.y));
+    this.x = Math.max(0, Math.min(this.mapW * TILE - VIEW_W, this.x));
+    this.y = Math.max(0, Math.min(this.mapH * TILE - VIEW_H, this.y));
   }
 }
 
@@ -738,14 +982,17 @@ export class Renderer {
         if (f === FOG_HIDDEN) continue;
         let t = floor.tiles[ty * floor.w + tx] as Tile;
         const hash = tileHash(tx, ty);
-        // corruption visually eats the floor
-        if (t === Tile.Floor && (hash % 1000) / 1000 < decayFrac) t = Tile.CorruptFloor;
-        const sprite = t === Tile.Floor ? atlas.floorVariants[hash % 4]! : atlas.tiles.get(t)!;
+        // corruption visually eats dungeon floors
+        if (t === Tile.Floor && floor.depth > 0 && (hash % 1000) / 1000 < decayFrac) t = Tile.CorruptFloor;
+        const sprite =
+          t === Tile.Floor ? atlas.floorVariants[hash % 4]!
+          : t === Tile.Grass ? atlas.grassVariants[hash % 3]!
+          : atlas.tiles.get(t)!;
         const sx = tx * TILE - this.camX;
         const sy = ty * TILE - this.camY;
         ctx.drawImage(sprite, sx, sy, TILE, TILE);
-        if (t === Tile.CorruptFloor) {
-          // pulse
+        if (t === Tile.CorruptFloor || t === Tile.CorruptLand || t === Tile.GateEntrance) {
+          // chaos pulse
           const pulse = 0.1 + 0.08 * Math.sin(time * 3 + hash);
           ctx.fillStyle = `rgba(255, 0, 220, ${pulse.toFixed(3)})`;
           ctx.fillRect(sx, sy, TILE, TILE);
@@ -815,6 +1062,29 @@ export class Renderer {
     const lw = sprite.width / PX;
     const lh = sprite.height / PX;
     this.ctx.drawImage(sprite, snap(p.cx - lw / 2 - this.camX), snap(p.y + p.h - lh - this.camY), lw, lh);
+  }
+
+  /** Villager NPC; shows their line as a tiny speech text when the player is near. */
+  drawNpc(n: { x: number; y: number; line: string }, fog: Uint8Array, floorW: number, nearPlayer: boolean): void {
+    if (!this.visibleAt(fog, floorW, n.x + 6, n.y + 7)) return;
+    const { ctx } = this;
+    const sprite = this.atlas.villager;
+    const lw = sprite.width / PX;
+    const lh = sprite.height / PX;
+    const sx = snap(n.x - this.camX);
+    const sy = snap(n.y - this.camY);
+    ctx.drawImage(sprite, sx, sy, lw, lh);
+    if (nearPlayer) {
+      ctx.font = '6px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(10, 10, 18, 0.75)';
+      const tw = ctx.measureText(n.line).width;
+      ctx.fillRect(sx + lw / 2 - tw / 2 - 2, sy - 11, tw + 4, 9);
+      ctx.fillStyle = '#e8e0c8';
+      ctx.fillText(n.line, sx + lw / 2, sy - 9);
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+    }
   }
 
   /** Aimed sword sweep: translucent wedge + bright edge around the aim direction. */

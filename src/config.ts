@@ -14,6 +14,16 @@ export const PX = 2;
 // --- Dungeon ---
 export const MAP_W = 48;
 export const MAP_H = 36;
+
+// --- Overworld ---
+export const WORLD_W = 96;
+export const WORLD_H = 72;
+export const WORLD_VISION_RADIUS = 12; // tiles; open air sees farther than dungeons
+export const WILD_SPAWN_INTERVAL = 18; // s between wilderness spawn checks (shrinks with chaos)
+export const WILD_SPAWN_CAP = 8; // max live wilderness monsters (grows with chaos)
+export const SHRINE_CLEANSE = 20; // corruption purged per prayer
+export const SHRINE_USES = 2; // prayers per shrine per run
+export const HEALER_COOLDOWN = 120; // s between free heals at the same healer
 export const FINAL_DEPTH = 8;
 export const ROOM_ATTEMPTS = 30;
 export const ROOM_MIN = 4;

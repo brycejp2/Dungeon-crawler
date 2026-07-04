@@ -9,6 +9,8 @@ import {
   ARROW_SPEED, ARROW_DAMAGE, BOW_COOLDOWN, BOMB_THROW_DIST,
   BOLT_DAMAGE, BOLT_SPEED, NOVA_RADIUS, NOVA_DAMAGE,
   HASTE_DURATION, STONESKIN_DURATION, BLINK_DIST, CLEANSE_CORRUPTION,
+  WORLD_VISION_RADIUS, WILD_SPAWN_INTERVAL, WILD_SPAWN_CAP,
+  SHRINE_CLEANSE, SHRINE_USES, HEALER_COOLDOWN,
 } from './config';
 import type { Game, Scene, SceneFlow, RunStats } from './game';
 import type { InputState } from './input';
@@ -16,7 +18,9 @@ import { Rng } from './rng';
 import {
   Tile, generateFloor, isSolid, hasLineOfSight, inRoom,
 } from './dungeon';
-import type { FloorData } from './dungeon';
+import type { FloorData, FloorOpts, Pt } from './dungeon';
+import { generateWorld, CHAOS_EVENTS, villageIntact } from './world';
+import type { WorldData, Village } from './world';
 import { Player, Enemy, moveAndCollide } from './entities';
 import type { World, Projectile, Pickup } from './entities';
 import { aabbOverlap, knockbackVector, swingDamage, swingArcHits, resolveAimDir, castThrow } from './combat';
@@ -53,20 +57,90 @@ interface BoomFx {
 
 const BOMB_RADIUS = 30;
 
+type DungeonId = 'gate' | 'barrow' | 'mine';
+
+interface DungeonDef {
+  name: string;
+  floors: number;
+  seedSalt: number;
+  opts(depth: number): FloorOpts;
+}
+
+const DUNGEONS: Record<DungeonId, DungeonDef> = {
+  gate: {
+    name: 'Chaos Gate', floors: FINAL_DEPTH, seedSalt: 0,
+    opts: () => ({}),
+  },
+  barrow: {
+    name: 'Haunted Barrow', floors: 3, seedSalt: 0x9d2c5680,
+    opts: (depth) => ({
+      bossFloor: false, schedule: false, lastFloor: depth >= 3,
+      extraLoot: depth >= 3 ? ['sword2', 'elixir', 'purityPotion'] : undefined,
+    }),
+  },
+  mine: {
+    name: 'Old Mine', floors: 3, seedSalt: 0x2545f491,
+    opts: (depth) => ({
+      bossFloor: false, schedule: false, lastFloor: depth >= 3,
+      extraLoot: depth >= 3 ? ['bomb', 'bomb', 'arrows', 'arrows', 'healPotion'] : undefined,
+    }),
+  },
+};
+
+interface Npc {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  wanderX: number;
+  wanderY: number;
+  wanderTimer: number;
+  village: 'home' | 'far';
+  line: string;
+}
+
+/** A visited map with its live contents; sites persist for the whole run. */
+interface SiteState {
+  floor: FloorData;
+  fog: Uint8Array;
+  enemies: Enemy[];
+  pickups: Pickup[];
+  npcs: Npc[];
+}
+
+type SiteRef = { kind: 'world' } | { kind: 'dungeon'; id: DungeonId; depth: number };
+
+const TRANSITION_TILES = new Set<Tile>([
+  Tile.StairsUp, Tile.StairsDown, Tile.GateEntrance, Tile.CaveEntrance, Tile.MineEntrance,
+]);
+
 export class PlayScene implements Scene, World {
   readonly rng: Rng;
   audio!: AudioPort;
   player: Player;
   aggroBonus = 0;
 
-  private floor: FloorData;
-  private depth: number;
+  private floor!: FloorData;
+  private depth = 0; // 0 = overworld; otherwise current dungeon floor
   private enemies: Enemy[] = [];
   private projectiles: Projectile[] = [];
   private pickups: Pickup[] = [];
   private bombs: Bomb[] = [];
   private booms: BoomFx[] = [];
-  private fog: Uint8Array;
+  private fog!: Uint8Array;
+  // --- overworld / site registry ---
+  private readonly baseSeed: number;
+  private world!: WorldData;
+  private sites = new Map<string, SiteState>();
+  private site: SiteRef = { kind: 'world' };
+  private cur!: SiteState;
+  private npcs: Npc[] = [];
+  private deepestGate = 0;
+  private appliedChaosTier = 0;
+  private shrineUses = new Map<string, number>();
+  private healerTimes = new Map<string, number>();
+  private wildTimer = WILD_SPAWN_INTERVAL;
+  private contextHint = '';
   private corruption: CorruptionState;
   private inventory = new Inventory();
   private spellbook = new Spellbook();
@@ -97,18 +171,13 @@ export class PlayScene implements Scene, World {
   constructor(
     private readonly flow: SceneFlow,
     seed: number,
-    startDepth = 1,
+    startDepth = 0,
     character?: CharacterDef,
   ) {
     this.rng = new Rng(seed);
-    this.depth = startDepth;
+    this.baseSeed = seed;
     this.character = character ?? randomCharacter(this.rng);
-    this.floor = generateFloor(seed, this.depth);
-    this.fog = new Uint8Array(this.floor.w * this.floor.h).fill(FOG_HIDDEN);
-    this.player = new Player(
-      this.floor.spawn.x * TILE + 3,
-      this.floor.spawn.y * TILE + 2,
-    );
+    this.player = new Player(0, 0);
 
     // apply the character build
     const build = buildCharacter(this.character);
@@ -133,13 +202,27 @@ export class PlayScene implements Scene, World {
     if (build.bow) this.inventory.hasBow = true;
     this.inventory.arrows += build.arrows;
 
-    this.populateFloor();
+    // The overworld always exists (chaos events land on it even from below)
+    this.createWorldSite();
+    if (startDepth >= 1) {
+      // dev shortcut: start inside the Chaos Gate
+      this.activateSite(
+        { kind: 'dungeon', id: 'gate', depth: Math.min(startDepth, DUNGEONS.gate.floors) },
+        null,
+      );
+    } else {
+      this.activateSite({ kind: 'world' }, this.world.spawn);
+    }
   }
 
   enter(game: Game): void {
     this.audio = game.audio;
-    this.hud.push(`${identityOf(this.character)} descends.`);
-    this.hud.push('The dungeon seethes with chaos. Hurry.');
+    this.hud.push(`${identityOf(this.character)} takes up the quest.`);
+    this.hud.push(
+      this.site.kind === 'world'
+        ? 'Seal the Chaos Gate before the corruption consumes the land.'
+        : 'The dungeon seethes with chaos. Hurry.',
+    );
     this.recomputeFog();
   }
 
@@ -165,48 +248,160 @@ export class PlayScene implements Scene, World {
     this.enemies.push(bat);
   }
 
-  // --- setup ---
+  // --- sites: the overworld and every dungeon floor, persistent for the run ---
 
-  private populateFloor(): void {
-    this.enemies = [];
-    this.projectiles = [];
-    this.pickups = [];
-    this.bombs = [];
-    this.booms = [];
-    const tier = this.corruption.tierReached;
-    for (const s of this.floor.enemySpawns) {
-      const corrupted =
-        s.kind !== 'boss' && tier >= CORRUPT_VARIANT_TIER && this.rng.chance(CORRUPT_VARIANT_CHANCE);
-      const e = new Enemy(s.kind, 0, 0, corrupted, this.depth, tier);
-      e.x = s.x * TILE + (TILE - e.w) / 2;
-      e.y = s.y * TILE + (TILE - e.h) / 2;
-      this.enemies.push(e);
-    }
-    for (const s of this.floor.itemSpawns) {
-      this.pickups.push({ item: s.item, x: s.x * TILE + 3, y: s.y * TILE + 3, dead: false });
-    }
+  private siteKey(ref: SiteRef): string {
+    return ref.kind === 'world' ? 'world' : `${ref.id}:${ref.depth}`;
   }
 
-  private descend(game: Game): void {
-    this.depth++;
-    this.audio.play('stairs');
-    cleanse(this.corruption, STAIRS_CLEANSE);
-    this.floor = generateFloor(this.rng.subSeed(), this.depth);
-    this.fog = new Uint8Array(this.floor.w * this.floor.h).fill(FOG_HIDDEN);
-    this.player.x = this.floor.spawn.x * TILE + 3;
-    this.player.y = this.floor.spawn.y * TILE + 2;
+  private createWorldSite(): void {
+    this.world = generateWorld(this.baseSeed);
+    const site: SiteState = {
+      floor: this.world,
+      fog: new Uint8Array(this.world.w * this.world.h).fill(FOG_HIDDEN),
+      enemies: [],
+      pickups: [],
+      npcs: [],
+    };
+    for (const s of this.world.enemySpawns) {
+      const e = new Enemy(s.kind, 0, 0, false, 1, this.corruption.tierReached);
+      e.x = s.x * TILE + (TILE - e.w) / 2;
+      e.y = s.y * TILE + (TILE - e.h) / 2;
+      site.enemies.push(e);
+    }
+    for (const s of this.world.itemSpawns) {
+      site.pickups.push({ item: s.item, x: s.x * TILE + 3, y: s.y * TILE + 3, dead: false });
+    }
+    for (const n of this.world.npcSpawns) {
+      site.npcs.push({
+        x: n.x * TILE + 3, y: n.y * TILE + 2, w: 10, h: 12,
+        wanderX: n.x * TILE, wanderY: n.y * TILE,
+        wanderTimer: this.rng.range(0.5, 3),
+        village: n.village, line: n.line,
+      });
+    }
+    this.sites.set('world', site);
+  }
+
+  private getOrCreateSite(ref: SiteRef): { site: SiteState; isNew: boolean } {
+    const key = this.siteKey(ref);
+    const existing = this.sites.get(key);
+    if (existing) return { site: existing, isNew: false };
+    if (ref.kind === 'world') throw new Error('world site must exist');
+    const def = DUNGEONS[ref.id];
+    const floor = generateFloor((this.baseSeed ^ def.seedSalt) >>> 0, ref.depth, def.opts(ref.depth));
+    const site: SiteState = {
+      floor,
+      fog: new Uint8Array(floor.w * floor.h).fill(FOG_HIDDEN),
+      enemies: [],
+      pickups: [],
+      npcs: [],
+    };
+    const tier = this.corruption.tierReached;
+    for (const s of floor.enemySpawns) {
+      const corrupted =
+        s.kind !== 'boss' && tier >= CORRUPT_VARIANT_TIER && this.rng.chance(CORRUPT_VARIANT_CHANCE);
+      const e = new Enemy(s.kind, 0, 0, corrupted, ref.depth, tier);
+      e.x = s.x * TILE + (TILE - e.w) / 2;
+      e.y = s.y * TILE + (TILE - e.h) / 2;
+      site.enemies.push(e);
+    }
+    for (const s of floor.itemSpawns) {
+      site.pickups.push({ item: s.item, x: s.x * TILE + 3, y: s.y * TILE + 3, dead: false });
+    }
+    this.sites.set(key, site);
+    return { site, isNew: true };
+  }
+
+  private activateSite(ref: SiteRef, arriveAt: Pt | null): void {
+    // transient effects never follow through a transition
+    this.projectiles = [];
+    this.bombs = [];
+    this.booms = [];
+    const { site, isNew } = this.getOrCreateSite(ref);
+    this.site = ref;
+    this.cur = site;
+    this.floor = site.floor;
+    this.fog = site.fog;
+    this.enemies = site.enemies;
+    this.pickups = site.pickups;
+    this.npcs = site.npcs;
+    this.depth = ref.kind === 'dungeon' ? ref.depth : 0;
+    if (ref.kind === 'dungeon' && ref.id === 'gate') {
+      this.deepestGate = Math.max(this.deepestGate, ref.depth);
+    }
+    // pressing deeper for the first time steadies the mind a little
+    if (ref.kind === 'dungeon' && isNew && ref.depth > 1) cleanse(this.corruption, STAIRS_CLEANSE);
+    this.placePlayerNear(arriveAt ?? site.floor.spawn);
     this.player.kx = 0;
     this.player.ky = 0;
-    this.populateFloor();
     this.recomputeFog();
+    this.renderer?.camera.setBounds(this.floor.w, this.floor.h);
     this.renderer?.camera.snapTo(this.player.cx, this.player.cy);
+  }
+
+  /** Stand the player next to a target tile without touching transition tiles. */
+  private placePlayerNear(t: Pt): void {
+    const spots = [
+      { x: 0, y: 1 }, { x: 0, y: -1 }, { x: 1, y: 0 }, { x: -1, y: 0 },
+      { x: 1, y: 1 }, { x: 1, y: -1 }, { x: -1, y: 1 }, { x: -1, y: -1 },
+      { x: 0, y: 0 },
+    ];
+    for (const d of spots) {
+      const tx = t.x + d.x;
+      const ty = t.y + d.y;
+      if (tx < 0 || ty < 0 || tx >= this.floor.w || ty >= this.floor.h) continue;
+      const tile = this.floor.tiles[ty * this.floor.w + tx] as Tile;
+      if (isSolid(tile)) continue;
+      if (TRANSITION_TILES.has(tile) && (d.x !== 0 || d.y !== 0)) continue;
+      this.player.x = tx * TILE + 3;
+      this.player.y = ty * TILE + 2;
+      return;
+    }
+    this.player.x = t.x * TILE + 3;
+    this.player.y = t.y * TILE + 2;
+  }
+
+  private enterDungeon(id: DungeonId): void {
+    this.audio.play('stairs');
+    this.activateSite({ kind: 'dungeon', id, depth: 1 }, null);
     this.hud.push(
-      this.depth >= FINAL_DEPTH
-        ? 'A dread presence stirs below. This is the last floor.'
-        : `You descend to floor ${this.depth}. The air grows fouler.`,
+      id === 'gate'
+        ? 'You step through the Chaos Gate. The air howls.'
+        : `You descend into the ${DUNGEONS[id].name}.`,
     );
-    if (this.depth >= FINAL_DEPTH) this.audio.play('bossRoar');
-    void game;
+    if (id === 'gate') this.audio.play('bossRoar');
+  }
+
+  private goDown(): void {
+    if (this.site.kind !== 'dungeon') return;
+    const { id, depth } = this.site;
+    if (depth >= DUNGEONS[id].floors) return;
+    this.audio.play('stairs');
+    this.activateSite({ kind: 'dungeon', id, depth: depth + 1 }, null);
+    const atBottom = id === 'gate' && depth + 1 >= FINAL_DEPTH;
+    this.hud.push(
+      atBottom
+        ? 'A dread presence stirs below. This is the last floor.'
+        : `You descend to floor ${depth + 1}. The air grows fouler.`,
+    );
+    if (atBottom) this.audio.play('bossRoar');
+  }
+
+  private goUp(): void {
+    if (this.site.kind !== 'dungeon') return;
+    const { id, depth } = this.site;
+    this.audio.play('stairs');
+    if (depth <= 1) {
+      const entrance = id === 'gate' ? this.world.gate : id === 'barrow' ? this.world.barrow : this.world.mine;
+      this.activateSite({ kind: 'world' }, entrance);
+      this.hud.push('You climb back into the open air.');
+    } else {
+      const target: SiteRef = { kind: 'dungeon', id, depth: depth - 1 };
+      const { site } = this.getOrCreateSite(target);
+      this.activateSite(target, site.floor.downStairs ?? site.floor.spawn);
+      this.hud.push(`You climb back to floor ${depth - 1}.`);
+    }
   }
 
   private endRun(game: Game, cause: string, victory: boolean): void {
@@ -214,7 +409,7 @@ export class PlayScene implements Scene, World {
     this.ending = true;
     const stats: RunStats = {
       identity: identityOf(this.character),
-      depth: this.depth,
+      depth: this.deepestGate,
       level: this.progression.level,
       kills: this.kills,
       corruptionPoints: Math.round(this.corruption.points),
@@ -245,10 +440,11 @@ export class PlayScene implements Scene, World {
     this.spellbook.regen(dt);
     if (this.flashT > 0) this.flashT -= dt;
 
-    // Corruption is the clock: always ticking
+    // Corruption is the clock: always ticking (slower under open sky — depth 0)
     const events = tickCorruption(this.corruption, dt, this.depth, this.fx.corruptionRateMult, this.rng);
     this.handleCorruptionEvents(events, game);
     if (this.ending) return;
+    this.syncChaosEvents();
 
     // Aim: right stick > mouse pointer > facing. Resolved before the player
     // update so melee swings started this tick sweep toward the cursor.
@@ -281,6 +477,14 @@ export class PlayScene implements Scene, World {
       if (entry) this.activateEntry(entry, game);
     }
     if (input.fire) this.tryFireBow();
+
+    // Overworld life: villagers, wandering beasts, shrines and healers
+    this.contextHint = '';
+    if (this.site.kind === 'world') {
+      this.updateNpcs(dt);
+      this.updateWilderness(dt);
+      this.updateWorldInteractions(input);
+    }
 
     // Enemies
     for (const e of this.enemies) e.update(dt, this);
@@ -393,7 +597,7 @@ export class PlayScene implements Scene, World {
     for (const e of this.enemies) {
       if (e.dead) {
         this.kills++;
-        const boons = grantXp(this.progression, xpForKill(e.kind, e.corrupted, this.depth));
+        const boons = grantXp(this.progression, xpForKill(e.kind, e.corrupted, Math.max(1, this.depth)));
         this.applyLevelUps(boons);
         if (e.kind === 'boss') {
           this.audio.play('victory');
@@ -405,14 +609,36 @@ export class PlayScene implements Scene, World {
     this.enemies = this.enemies.filter((e) => !e.dead);
     this.projectiles = this.projectiles.filter((p) => !p.dead);
     this.pickups = this.pickups.filter((p) => !p.dead);
+    // keep the persistent site pointing at the fresh arrays
+    this.cur.enemies = this.enemies;
+    this.cur.pickups = this.pickups;
 
-    // Stairs
+    // Transitions: dungeon entrances on the overworld, stairs below
     const ptile = this.floor.tiles[
       Math.floor(this.player.cy / TILE) * this.floor.w + Math.floor(this.player.cx / TILE)
-    ];
-    if (ptile === Tile.StairsDown) {
-      this.descend(game);
-      return;
+    ] as Tile;
+    if (this.site.kind === 'world') {
+      if (ptile === Tile.GateEntrance) {
+        this.enterDungeon('gate');
+        return;
+      }
+      if (ptile === Tile.CaveEntrance) {
+        this.enterDungeon('barrow');
+        return;
+      }
+      if (ptile === Tile.MineEntrance) {
+        this.enterDungeon('mine');
+        return;
+      }
+    } else {
+      if (ptile === Tile.StairsDown) {
+        this.goDown();
+        return;
+      }
+      if (ptile === Tile.StairsUp) {
+        this.goUp();
+        return;
+      }
     }
 
     // Player death
@@ -456,6 +682,134 @@ export class PlayScene implements Scene, World {
       this.fx = mergeEffects(this.baseFx, computeMutationEffects(this.corruption.mutations));
       this.recomputeMaxHp();
     }
+  }
+
+  /** Apply pending chaos-tier world events (village falls, land decays, attacks). */
+  private syncChaosEvents(): void {
+    while (this.appliedChaosTier < this.corruption.tierReached && this.appliedChaosTier < CHAOS_EVENTS.length) {
+      const ev = CHAOS_EVENTS[this.appliedChaosTier]!;
+      this.appliedChaosTier++;
+      const worldSite = this.sites.get('world')!;
+      const spawns = ev.apply(this.world, this.rng);
+      // villages that fell lose their people
+      worldSite.npcs = worldSite.npcs.filter((n) =>
+        this.world.npcSpawns.some((s) => s.village === n.village),
+      );
+      if (this.site.kind === 'world') this.npcs = worldSite.npcs;
+      for (const s of spawns) {
+        const e = new Enemy(s.kind, 0, 0, s.corrupted, 1, this.corruption.tierReached);
+        e.x = s.x * TILE + (TILE - e.w) / 2;
+        e.y = s.y * TILE + (TILE - e.h) / 2;
+        worldSite.enemies.push(e);
+      }
+      this.hud.push(ev.message);
+      this.audio.play('bossRoar');
+      this.flashT = 0.3;
+      this.flashColor = '#ff20d0';
+    }
+  }
+
+  private updateNpcs(dt: number): void {
+    for (const n of this.npcs) {
+      n.wanderTimer -= dt;
+      if (n.wanderTimer <= 0) {
+        n.wanderTimer = this.rng.range(1.5, 4);
+        n.wanderX = n.x + this.rng.range(-40, 40);
+        n.wanderY = n.y + this.rng.range(-30, 30);
+      }
+      const dx = n.wanderX - n.x;
+      const dy = n.wanderY - n.y;
+      const len = Math.hypot(dx, dy);
+      if (len > 4) moveAndCollide(n, (dx / len) * 16 * dt, (dy / len) * 16 * dt, this);
+    }
+  }
+
+  /** Chaos-scaled wandering monsters in the wilderness. */
+  private updateWilderness(dt: number): void {
+    this.wildTimer -= dt;
+    if (this.wildTimer > 0) return;
+    const tier = this.corruption.tierReached;
+    this.wildTimer = Math.max(6, WILD_SPAWN_INTERVAL - 3 * tier);
+    if (this.enemies.length >= WILD_SPAWN_CAP + 2 * tier) return;
+    const ptx = Math.floor(this.player.cx / TILE);
+    const pty = Math.floor(this.player.cy / TILE);
+    for (let tries = 0; tries < 30; tries++) {
+      const x = this.rng.int(2, this.world.w - 3);
+      const y = this.rng.int(2, this.world.h - 3);
+      const d = Math.hypot(x - ptx, y - pty);
+      if (d < 13 || d > 24) continue;
+      if (isSolid(this.world.tiles[y * this.world.w + x] as Tile)) continue;
+      // villages stay safe until the tier-4 assault
+      const inVillage =
+        inRoom(this.world.homeVillage.bounds, x, y) || inRoom(this.world.farVillage.bounds, x, y);
+      if (inVillage && tier < 4) continue;
+      const kind = tier >= 1 && this.rng.chance(0.25) ? 'archer' : this.rng.chance(0.6) ? 'chaser' : 'bat';
+      const corrupted = tier >= 2 && this.rng.chance(0.12 * tier);
+      const e = new Enemy(kind, 0, 0, corrupted, 1 + Math.floor(tier / 2), tier);
+      e.x = x * TILE + (TILE - e.w) / 2;
+      e.y = y * TILE + (TILE - e.h) / 2;
+      this.enemies.push(e);
+      return;
+    }
+  }
+
+  /** Shrines cleanse corruption; healers mend wounds. Fallen villages offer neither. */
+  private updateWorldInteractions(input: InputState): void {
+    const ptx = Math.floor(this.player.cx / TILE);
+    const pty = Math.floor(this.player.cy / TILE);
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const tx = ptx + dx;
+      const ty = pty + dy;
+      if (tx < 0 || ty < 0 || tx >= this.world.w || ty >= this.world.h) continue;
+      const t = this.world.tiles[ty * this.world.w + tx] as Tile;
+      if (t !== Tile.Shrine && t !== Tile.Healer) continue;
+      const key = `${tx},${ty}`;
+      const village = this.villageOf(tx, ty);
+      if (village && !villageIntact(village, this.corruption.tierReached)) {
+        this.contextHint = t === Tile.Shrine ? 'The shrine is dead stone.' : 'The healer’s tent lies empty.';
+        return;
+      }
+      if (t === Tile.Shrine) {
+        const uses = this.shrineUses.get(key) ?? 0;
+        if (uses >= SHRINE_USES) {
+          this.contextHint = 'The shrine’s light is spent.';
+          return;
+        }
+        this.contextHint = 'F: pray (cleanse corruption)';
+        if (input.interact) {
+          this.shrineUses.set(key, uses + 1);
+          cleanse(this.corruption, SHRINE_CLEANSE);
+          this.hud.push('Order washes through you. The chaos recedes.');
+          this.audio.play('potion');
+          this.flashT = 0.25;
+          this.flashColor = '#40e0d0';
+        }
+      } else {
+        const last = this.healerTimes.get(key);
+        if (last !== undefined && this.time - last < HEALER_COOLDOWN) {
+          this.contextHint = `The healer must rest (${Math.ceil(HEALER_COOLDOWN - (this.time - last))}s).`;
+          return;
+        }
+        this.contextHint = 'F: let the healer mend your wounds';
+        if (input.interact) {
+          this.healerTimes.set(key, this.time);
+          this.player.hp = this.player.maxHp;
+          this.player.curePoison();
+          this.hud.push('Warm hands and bitter herbs. You are whole again.');
+          this.audio.play('potion');
+        }
+      }
+      return;
+    }
+  }
+
+  private villageOf(tx: number, ty: number): 'home' | 'far' | null {
+    const near = (v: Village): boolean =>
+      tx >= v.bounds.x - 2 && tx < v.bounds.x + v.bounds.w + 2 &&
+      ty >= v.bounds.y - 2 && ty < v.bounds.y + v.bounds.h + 2;
+    if (near(this.world.homeVillage)) return 'home';
+    if (near(this.world.farVillage)) return 'far';
+    return null;
   }
 
   /** Max hp = base + mutation delta + level growth, clamped; current hp follows the cap down. */
@@ -622,6 +976,19 @@ export class PlayScene implements Scene, World {
     void game;
   }
 
+  private locationLabel(): string {
+    if (this.site.kind === 'dungeon') {
+      return `${DUNGEONS[this.site.id].name} B${this.site.depth}`;
+    }
+    const tx = Math.floor(this.player.cx / TILE);
+    const ty = Math.floor(this.player.cy / TILE);
+    if (this.villageOf(tx, ty) === 'home') return this.world.homeVillage.name;
+    if (this.villageOf(tx, ty) === 'far') return this.world.farVillage.name;
+    const c = this.world.castle;
+    if (tx >= c.x - 1 && tx < c.x + c.w + 1 && ty >= c.y - 1 && ty < c.y + c.h + 1) return 'Bandit Castle';
+    return 'Wilderness';
+  }
+
   /** Camera top-left in world coords; approximated before the first render. */
   private cameraPos(): { x: number; y: number } {
     if (this.renderer) return { x: this.renderer.camera.x, y: this.renderer.camera.y };
@@ -706,7 +1073,8 @@ export class PlayScene implements Scene, World {
     }
     const ptx = Math.floor(this.player.cx / TILE);
     const pty = Math.floor(this.player.cy / TILE);
-    const radius = VISION_RADIUS + this.fx.visionDelta;
+    const baseRadius = this.site.kind === 'world' ? WORLD_VISION_RADIUS : VISION_RADIUS;
+    const radius = baseRadius + this.fx.visionDelta;
     for (let ty = Math.max(0, pty - radius); ty <= Math.min(h - 1, pty + radius); ty++) {
       for (let tx = Math.max(0, ptx - radius); tx <= Math.min(w - 1, ptx + radius); tx++) {
         if (Math.hypot(tx - ptx, ty - pty) > radius) continue;
@@ -738,6 +1106,7 @@ export class PlayScene implements Scene, World {
         hair: race.hair,
         longHair: this.character.gender === 'female',
       });
+      this.renderer.camera.setBounds(this.floor.w, this.floor.h);
       this.renderer.camera.snapTo(this.player.cx, this.player.cy);
     }
     const r = this.renderer;
@@ -747,6 +1116,11 @@ export class PlayScene implements Scene, World {
     r.drawTiles(this.floor, this.fog, this.corruption.points, this.time);
 
     for (const p of this.pickups) r.drawPickup(p, this.fog, this.floor.w, this.time);
+
+    for (const n of this.npcs) {
+      const near = Math.hypot(n.x - this.player.x, n.y - this.player.y) < 30;
+      r.drawNpc(n, this.fog, this.floor.w, near);
+    }
 
     // bombs on the ground
     for (const b of this.bombs) {
@@ -789,8 +1163,9 @@ export class PlayScene implements Scene, World {
     if (this.flashT > 0) r.flashScreen(this.flashColor, Math.min(0.5, this.flashT * 2));
 
     this.hud.render(
-      ctx, r.atlas, this.player, this.corruption, this.depth,
+      ctx, r.atlas, this.player, this.corruption, this.locationLabel(),
       this.inventory, this.spellbook, this.hotbar, this.progression, this.time,
+      this.contextHint,
     );
 
     if (this.window.open) {

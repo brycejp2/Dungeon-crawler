@@ -39,12 +39,13 @@ export class Hud {
     atlas: SpriteAtlas,
     player: Player,
     corruption: CorruptionState,
-    depth: number,
+    location: string,
     inventory: Inventory,
     spellbook: Spellbook,
     hotbar: Hotbar,
     progression: Progression,
     time: number,
+    contextHint = '',
   ): void {
     ctx.save();
     ctx.textBaseline = 'top';
@@ -114,11 +115,11 @@ export class Hud {
     }
     this.drawSkull(ctx, VIEW_W - 14, 3);
 
-    // --- floor number, top-center ---
+    // --- location name, top-center ---
     ctx.font = FONT_BIG;
     ctx.fillStyle = '#e8e8f0';
     ctx.textAlign = 'center';
-    ctx.fillText(`B${depth}`, VIEW_W / 2, 4);
+    ctx.fillText(location, VIEW_W / 2, 4);
     ctx.textAlign = 'left';
 
     // --- hotbar, bottom ---
@@ -161,6 +162,15 @@ export class Hud {
     ctx.fillStyle = '#707088';
     ctx.fillText('1-9 use', VIEW_W - 42, barY + 1);
     ctx.fillText('I: bag', VIEW_W - 42, barY + 8);
+
+    // --- context hint (shrines, healers) centered above the bar ---
+    if (contextHint) {
+      ctx.font = FONT;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ffd040';
+      ctx.fillText(contextHint, VIEW_W / 2, barY - 12);
+      ctx.textAlign = 'left';
+    }
 
     // --- message log above the bar ---
     ctx.font = FONT;

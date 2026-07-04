@@ -103,7 +103,12 @@ export abstract class Actor {
 }
 
 /** Per-axis AABB movement vs solid tiles, sliding along walls. */
-export function moveAndCollide(a: Actor, dx: number, dy: number, world: World): void {
+export function moveAndCollide(
+  a: { x: number; y: number; w: number; h: number },
+  dx: number,
+  dy: number,
+  world: Pick<World, 'isSolidTile'>,
+): void {
   if (dx !== 0) {
     a.x += dx;
     const top = Math.floor(a.y / TILE);

@@ -77,7 +77,31 @@ Blessings range from raw stats (+1 heart, +3 mana, +10% speed) to stranger gifts
 slower corruption, a bow, cheaper spells, extra potions — or the **Blessing of
 Order**, which absorbs your first mutation harmlessly.
 
-## The run
+## The world above
+
+Every run begins in **Thornvale**, your home village on a procedurally generated
+overworld — forests, lakes, mountain ranges, and roads that link the places that
+matter:
+
+- **Two villages**: Thornvale and distant **Ashford**. Each has a **shrine** (pray to
+  cleanse 20 corruption, twice per shrine) and a **healer** (free full heal, then they
+  must rest). Villagers wander and gossip.
+- **The Bandit Castle**: a walled fort garrisoned by brigands, holding a weapon,
+  elixir, arrows and bombs for whoever clears it.
+- **Three descents**: the 8-floor **Chaos Gate** (the run's goal), plus two optional
+  3-floor side dungeons — the **Haunted Barrow** (sword, elixir) and the **Old Mine**
+  (bombs, arrows). Stairs work both ways and every visited map persists: cleared
+  floors stay cleared, dropped loot waits where you left it.
+- Corruption ticks slower under open sky — but the **wilderness spawns wandering
+  beasts**, and more of them the further the chaos advances.
+
+**Chaos events**: each corruption threshold that mutates you also scars the world.
+At 20 the land around the Gate begins to rot; at 40 chaos beasts multiply; at 60
+**Ashford falls** — its people gone, its shrine dead stone, corrupted horrors in the
+square; at 80 storms scour the map and **Thornvale itself is attacked**. Slow the
+clock or watch the world die around you.
+
+## The descent
 
 - **8 floors**, rooms-and-corridors, always fully connected, seeded and deterministic.
 - **Enemies**: goblin chasers (telegraphed lunges), cultist archers (kite and shoot),
