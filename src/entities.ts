@@ -37,6 +37,7 @@ export interface Pickup {
   x: number; // top-left, px
   y: number;
   dead: boolean;
+  spawnId?: number; // index into the floor's item+gold spawns; absent = transient drop
 }
 
 /** What entities may ask of the level. Implemented by PlayScene. */
@@ -336,6 +337,7 @@ const ENEMY_STATS: Record<EnemyKind, EnemyStats> = {
 };
 
 export class Enemy extends Actor {
+  spawnId = -1; // index into the floor's enemy spawns; -1 = transient (wild/chaos/summoned)
   state: EnemyState = 'idle';
   stateTime = 0;
   speed: number;

@@ -45,8 +45,8 @@ import type { AudioPort } from './audio';
 import { SPELLS, Spellbook, Hotbar } from './spells';
 import type { SpellId, HotbarEntry } from './spells';
 import { InventoryWindow } from './inventoryUi';
-import { writeSave, clearSave, getSettings } from './storage';
-import type { RunSave } from './storage';
+import { writeSave, clearSave, getSettings, missingIndices } from './storage';
+import type { RunSave, SiteSave } from './storage';
 
 interface Bomb {
   x: number;
@@ -108,6 +108,7 @@ interface Npc {
   stock?: ShopEntry[]; // merchants
   hint?: string; // hermits
   giftGiven?: boolean; // hermits hand over a little gold once
+  spawnId?: number; // index into the floor's friendly spawns (dungeon NPCs)
 }
 
 /** A modal talk/trade menu; the world (and corruption clock) pauses under it. */
@@ -125,6 +126,8 @@ interface SiteState {
   enemies: Enemy[];
   pickups: Pickup[];
   npcs: Npc[];
+  doorsOpen: boolean; // key already used on this floor
+  rubbleCleared: Pt[]; // rubble tiles blown open by bombs
 }
 
 type SiteRef = { kind: 'world' } | { kind: 'dungeon'; id: DungeonId; depth: number };
@@ -309,14 +312,109 @@ export class PlayScene implements Scene, World {
         killsAtAccept: this.questActive ? this.questActive.killsAtAccept : 0,
         notified: this.questNotified,
       },
+      sites: this.serializeSites(),
     };
   }
 
+  /** A stable key for an NPC's persisted state (village for town shops, spawn index below). */
+  private npcKey(n: Npc): string {
+    return n.village ? `m:${n.village}` : `i:${n.spawnId ?? -1}`;
+  }
+
+  /** Per-map deltas: surviving base enemies/pickups, opened doors, blown rubble, shop state. */
+  private serializeSites(): SiteSave[] {
+    const out: SiteSave[] = [];
+    for (const [key, site] of this.sites) {
+      const baseCount = site.floor.itemSpawns.length + site.floor.goldSpawns.length;
+      const alivePickupIds = site.pickups
+        .filter((p) => p.spawnId !== undefined && p.spawnId >= 0 && !p.dead)
+        .map((p) => p.spawnId!);
+      out.push({
+        key,
+        enemies: site.enemies
+          .filter((e) => e.spawnId >= 0 && !e.dead)
+          .map((e) => ({ idx: e.spawnId, hp: e.hp, corrupted: e.corrupted })),
+        takenPickups: missingIndices(baseCount, alivePickupIds),
+        doorsOpen: site.doorsOpen,
+        rubbleCleared: site.rubbleCleared.map((p) => [p.x, p.y] as [number, number]),
+        npcs: site.npcs
+          .filter((n) => n.kind === 'merchant' || n.kind === 'hermit')
+          .map((n) => ({
+            key: this.npcKey(n),
+            giftGiven: !!n.giftGiven,
+            stock: n.stock ? n.stock.map((s) => ({ ...s })) : null,
+          })),
+      });
+    }
+    return out;
+  }
+
+  /** Parse a site key back into a SiteRef. */
+  private refFromKey(key: string): SiteRef {
+    if (key === 'world') return { kind: 'world' };
+    const [id, depth] = key.split(':');
+    return { kind: 'dungeon', id: id as DungeonId, depth: Number(depth) };
+  }
+
+  /** Re-create every visited map and re-apply its saved deltas. */
+  private restoreSites(saves: SiteSave[]): void {
+    for (const saved of saves) {
+      const ref = this.refFromKey(saved.key);
+      const { site } = this.getOrCreateSite(ref);
+      const depth = ref.kind === 'dungeon' ? ref.depth : 1;
+
+      // enemies: rebuild only the survivors (dead base enemies stay dead)
+      const alive = new Map(saved.enemies.map((e) => [e.idx, e]));
+      const rebuilt: Enemy[] = [];
+      site.floor.enemySpawns.forEach((s, i) => {
+        const rec = alive.get(i);
+        if (!rec) return;
+        const e = new Enemy(s.kind, 0, 0, rec.corrupted, depth, this.corruption.tierReached);
+        e.x = s.x * TILE + (TILE - e.w) / 2;
+        e.y = s.y * TILE + (TILE - e.h) / 2;
+        e.hp = rec.hp;
+        e.spawnId = i;
+        rebuilt.push(e);
+      });
+      site.enemies = rebuilt;
+
+      // pickups: drop the ones already collected
+      const taken = new Set(saved.takenPickups);
+      site.pickups = site.pickups.filter(
+        (p) => p.spawnId === undefined || p.spawnId < 0 || !taken.has(p.spawnId),
+      );
+
+      // opened doors and blown rubble
+      if (saved.doorsOpen) {
+        for (const d of site.floor.doors) site.floor.tiles[d.y * site.floor.w + d.x] = Tile.Floor;
+        site.floor.doors.length = 0;
+        site.doorsOpen = true;
+      }
+      for (const [x, y] of saved.rubbleCleared) {
+        if (site.floor.tiles[y * site.floor.w + x] === Tile.Rubble) {
+          site.floor.tiles[y * site.floor.w + x] = Tile.Floor;
+        }
+        site.rubbleCleared.push({ x, y });
+      }
+
+      // merchant stock / hermit gifts
+      const byKey = new Map(saved.npcs.map((n) => [n.key, n]));
+      for (const n of site.npcs) {
+        const rec = byKey.get(this.npcKey(n));
+        if (!rec) continue;
+        n.giftGiven = rec.giftGiven;
+        if (rec.stock) n.stock = rec.stock.map((s) => ({ ...s }));
+      }
+    }
+  }
+
   /**
-   * Rebuild a suspended run. Maps regenerate from the seed (so the current
-   * floor's enemies and loose loot are fresh), while all of the player's
-   * hard-won progress — level, gold, inventory, corruption, mutations,
-   * quest — is restored exactly, and the player is placed where they left off.
+   * Rebuild a suspended run. Maps regenerate deterministically from the seed
+   * and then each visited floor's saved deltas are re-applied (cleared enemies
+   * stay dead, collected loot stays gone, doors stay open, shops keep their
+   * depleted stock), while all of the player's progress — level, gold,
+   * inventory, corruption, mutations, quest — is restored exactly and the
+   * player is placed where they left off.
    */
   private restoreFrom(save: RunSave): void {
     this.restoring = true;
@@ -369,7 +467,12 @@ export class PlayScene implements Scene, World {
       if (def) this.questActive = { def, killsAtAccept: save.quest.killsAtAccept };
     }
 
-    // enter the saved site (fresh maps), then pin the player exactly where they were
+    // re-create every visited map and re-apply its cleared-state deltas, so
+    // dead enemies stay dead and collected loot stays collected on return
+    // (older saves predate per-map deltas — fall back to fresh maps)
+    this.restoreSites(save.sites ?? []);
+
+    // enter the saved site (already rebuilt above), then pin the player where they were
     const ref: SiteRef = save.site.kind === 'world'
       ? { kind: 'world' }
       : { kind: 'dungeon', id: save.site.id as DungeonId, depth: save.site.depth };
@@ -462,35 +565,45 @@ export class PlayScene implements Scene, World {
       enemies: [],
       pickups: [],
       npcs: [],
+      doorsOpen: false,
+      rubbleCleared: [],
     };
-    for (const s of this.world.enemySpawns) {
+    this.world.enemySpawns.forEach((s, i) => {
       const e = new Enemy(s.kind, 0, 0, false, 1, this.corruption.tierReached);
       e.x = s.x * TILE + (TILE - e.w) / 2;
       e.y = s.y * TILE + (TILE - e.h) / 2;
+      e.spawnId = i;
       site.enemies.push(e);
-    }
-    for (const s of this.world.itemSpawns) {
-      site.pickups.push({ item: s.item, x: s.x * TILE + 3, y: s.y * TILE + 3, dead: false });
-    }
-    for (const s of this.world.goldSpawns) {
-      site.pickups.push({ item: null, gold: s.amount, x: s.x * TILE + 3, y: s.y * TILE + 3, dead: false });
-    }
+    });
+    this.pushBasePickups(site, this.world);
     site.npcs = this.worldNpcsFromSpawns();
     this.sites.set('world', site);
   }
 
   /** Build the overworld NPC list from the (possibly chaos-thinned) spawns. */
   private worldNpcsFromSpawns(): Npc[] {
-    return this.world.npcSpawns.map((n) => ({
+    return this.world.npcSpawns.map((n, i) => ({
       x: n.x * TILE + 3, y: n.y * TILE + 2, w: 10, h: 12,
       wanderX: n.x * TILE, wanderY: n.y * TILE,
       wanderTimer: this.rng.range(0.5, 3),
       village: n.village, kind: n.kind, line: n.line,
+      spawnId: i,
       stock:
         n.kind === 'merchant'
           ? n.village === 'castle' ? castleStock(this.rng) : merchantStock(0, this.rng)
           : undefined,
     }));
+  }
+
+  /** Add a floor's fixed item and gold pickups, tagged with stable spawn ids. */
+  private pushBasePickups(site: SiteState, floor: FloorData): void {
+    let id = 0;
+    for (const s of floor.itemSpawns) {
+      site.pickups.push({ item: s.item, x: s.x * TILE + 3, y: s.y * TILE + 3, dead: false, spawnId: id++ });
+    }
+    for (const s of floor.goldSpawns) {
+      site.pickups.push({ item: null, gold: s.amount, x: s.x * TILE + 3, y: s.y * TILE + 3, dead: false, spawnId: id++ });
+    }
   }
 
   private getOrCreateSite(ref: SiteRef): { site: SiteState; isNew: boolean } {
@@ -506,33 +619,32 @@ export class PlayScene implements Scene, World {
       enemies: [],
       pickups: [],
       npcs: [],
+      doorsOpen: false,
+      rubbleCleared: [],
     };
     const tier = this.corruption.tierReached;
-    for (const s of floor.enemySpawns) {
+    floor.enemySpawns.forEach((s, i) => {
       const corrupted =
         s.kind !== 'boss' && tier >= CORRUPT_VARIANT_TIER && this.rng.chance(CORRUPT_VARIANT_CHANCE);
       const e = new Enemy(s.kind, 0, 0, corrupted, ref.depth, tier);
       e.x = s.x * TILE + (TILE - e.w) / 2;
       e.y = s.y * TILE + (TILE - e.h) / 2;
+      e.spawnId = i;
       site.enemies.push(e);
-    }
-    for (const s of floor.itemSpawns) {
-      site.pickups.push({ item: s.item, x: s.x * TILE + 3, y: s.y * TILE + 3, dead: false });
-    }
-    for (const s of floor.goldSpawns) {
-      site.pickups.push({ item: null, gold: s.amount, x: s.x * TILE + 3, y: s.y * TILE + 3, dead: false });
-    }
+    });
+    this.pushBasePickups(site, floor);
     // friendly encounters waiting in the dark
-    for (const s of floor.friendlySpawns) {
+    floor.friendlySpawns.forEach((s, i) => {
       site.npcs.push({
         x: s.x * TILE + 3, y: s.y * TILE + 2, w: 10, h: 12,
         wanderX: s.x * TILE, wanderY: s.y * TILE, wanderTimer: 0,
         village: null, kind: s.kind, line: '',
+        spawnId: i,
         stock: s.kind === 'merchant' ? merchantStock(ref.depth, this.rng) : undefined,
         hint: s.kind === 'hermit' ? hermitHint(this.rng) : undefined,
         giftGiven: false,
       });
-    }
+    });
     this.sites.set(key, site);
     return { site, isNew: true };
   }
@@ -844,6 +956,7 @@ export class PlayScene implements Scene, World {
             this.floor.tiles[dd.y * this.floor.w + dd.x] = Tile.Floor;
           }
           this.floor.doors.length = 0;
+          this.cur.doorsOpen = true;
           this.hud.push('The chaos seal shatters. The way is open.');
           this.audio.play('unlock');
           break;
@@ -1550,6 +1663,7 @@ export class PlayScene implements Scene, World {
         if (tx < 0 || ty < 0 || tx >= this.floor.w || ty >= this.floor.h) continue;
         if (this.floor.tiles[ty * this.floor.w + tx] === Tile.Rubble) {
           this.floor.tiles[ty * this.floor.w + tx] = Tile.Floor;
+          this.cur.rubbleCleared.push({ x: tx, y: ty });
         }
       }
     }

@@ -8,6 +8,7 @@ import type { CharacterDef } from './character';
 import type { MutationId } from './corruption';
 import type { SpellId, HotbarEntry } from './spells';
 import type { ItemId } from './items';
+import type { ShopEntry } from './friendly';
 
 const KEY_SETTINGS = 'cc.settings.v1';
 const KEY_SCORES = 'cc.scores.v1';
@@ -94,6 +95,30 @@ export function insertHighScore(list: HighScore[], entry: HighScore): HighScore[
 
 // --- suspended run save (Continue) ---
 
+/**
+ * Per-map deltas so a resumed run keeps cleared floors cleared. Maps still
+ * regenerate deterministically from the seed; these record only what the
+ * player changed: which base enemies/pickups survive, opened doors, blown
+ * rubble, and merchant/hermit state. Transient entities (kill drops, wild
+ * spawns, chaos reinforcements, summoned bats) are intentionally dropped.
+ */
+export interface SiteSave {
+  key: string; // 'world' or `${dungeonId}:${depth}`
+  enemies: { idx: number; hp: number; corrupted: boolean }[]; // surviving base enemies
+  takenPickups: number[]; // spawn indices already collected
+  doorsOpen: boolean;
+  rubbleCleared: [number, number][];
+  npcs: { key: string; giftGiven: boolean; stock: ShopEntry[] | null }[];
+}
+
+/** Indices in [0, total) not present in `present` — e.g. collected pickups. */
+export function missingIndices(total: number, present: readonly number[]): number[] {
+  const set = new Set(present);
+  const out: number[] = [];
+  for (let i = 0; i < total; i++) if (!set.has(i)) out.push(i);
+  return out;
+}
+
 export interface RunSave {
   version: 1;
   savedAt: number;
@@ -121,6 +146,7 @@ export interface RunSave {
   shrineUses: [string, number][];
   healerTimes: [string, number][];
   quest: { idx: number; activeId: string | null; killsAtAccept: number; notified: boolean };
+  sites: SiteSave[];
 }
 
 // --- localStorage plumbing (guarded) ---

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_SETTINGS, mergeSettings, computeScore, makeHighScore,
-  insertHighScore, MAX_SCORES, type HighScore,
+  insertHighScore, missingIndices, MAX_SCORES, type HighScore,
 } from '../src/storage';
 import type { RunStats } from '../src/game';
 
@@ -94,6 +94,27 @@ describe('insertHighScore', () => {
     const entry = makeHighScore(stats(), true);
     const list = insertHighScore([], entry);
     expect(list.includes(entry)).toBe(true);
+  });
+});
+
+describe('missingIndices (per-map save deltas)', () => {
+  it('returns the collected/dead indices absent from the survivor list', () => {
+    expect(missingIndices(5, [0, 2, 4])).toEqual([1, 3]);
+    expect(missingIndices(3, [])).toEqual([0, 1, 2]); // everything gone
+    expect(missingIndices(3, [0, 1, 2])).toEqual([]); // nothing gone
+    expect(missingIndices(0, [])).toEqual([]);
+  });
+
+  it('ignores out-of-range and duplicate survivor ids', () => {
+    expect(missingIndices(4, [1, 1, 9, -2])).toEqual([0, 2, 3]);
+  });
+
+  it('round-trips: survivors + missing reconstruct the full index set', () => {
+    const total = 8;
+    const survivors = [1, 4, 7];
+    const missing = missingIndices(total, survivors);
+    const all = [...survivors, ...missing].sort((a, b) => a - b);
+    expect(all).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
   });
 });
 
