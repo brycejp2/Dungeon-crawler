@@ -45,6 +45,8 @@ import type { AudioPort } from './audio';
 import { SPELLS, Spellbook, Hotbar } from './spells';
 import type { SpellId, HotbarEntry } from './spells';
 import { InventoryWindow } from './inventoryUi';
+import { writeSave, clearSave, getSettings } from './storage';
+import type { RunSave } from './storage';
 
 interface Bomb {
   x: number;
@@ -182,6 +184,9 @@ export class PlayScene implements Scene, World {
   private flashT = 0;
   private flashColor = '#fff';
   private ending = false;
+  private restoring = false; // suppresses first-descent cleanse during resume
+  private paused = false;
+  private pauseCursor = 0;
   // aim state (recomputed every tick, read by render)
   private aimDirX = 0;
   private aimDirY = 1;
@@ -194,10 +199,12 @@ export class PlayScene implements Scene, World {
     seed: number,
     startDepth = 0,
     character?: CharacterDef,
+    save?: RunSave,
   ) {
-    this.rng = new Rng(seed);
-    this.baseSeed = seed;
-    this.character = character ?? randomCharacter(this.rng);
+    const effectiveSeed = save ? save.seed : seed;
+    this.rng = new Rng(effectiveSeed);
+    this.baseSeed = effectiveSeed;
+    this.character = save ? save.character : (character ?? randomCharacter(this.rng));
     this.player = new Player(0, 0);
 
     // apply the character build
@@ -225,7 +232,9 @@ export class PlayScene implements Scene, World {
 
     // The overworld always exists (chaos events land on it even from below)
     this.createWorldSite();
-    if (startDepth >= 1) {
+    if (save) {
+      this.restoreFrom(save);
+    } else if (startDepth >= 1) {
       // dev shortcut: start inside the Chaos Gate
       this.activateSite(
         { kind: 'dungeon', id: 'gate', depth: Math.min(startDepth, DUNGEONS.gate.floors) },
@@ -245,6 +254,176 @@ export class PlayScene implements Scene, World {
         : 'The dungeon seethes with chaos. Hurry.',
     );
     this.recomputeFog();
+  }
+
+  // --- save / resume (Continue) ---
+
+  private readonly pauseOptions = ['Resume', 'Save & Quit', 'Abandon Run'];
+
+  /** Snapshot the live run for Continue, or null if the run has already ended. */
+  serialize(): RunSave | null {
+    if (this.ending) return null;
+    const site: RunSave['site'] =
+      this.site.kind === 'world'
+        ? { kind: 'world' }
+        : { kind: 'dungeon', id: this.site.id, depth: this.site.depth };
+    return {
+      version: 1,
+      savedAt: Date.now(),
+      seed: this.baseSeed,
+      character: this.character,
+      site,
+      player: {
+        x: this.player.x, y: this.player.y, hp: this.player.hp, maxHp: this.player.maxHp,
+        facing: this.player.facing, hasteT: this.player.hasteT, stoneskinT: this.player.stoneskinT,
+        poisoned: this.player.poisoned,
+      },
+      inventory: {
+        weapon: this.inventory.weapon, hasKey: this.inventory.hasKey, hasBow: this.inventory.hasBow,
+        arrows: this.inventory.arrows, gold: this.inventory.gold,
+        counts: this.inventory.snapshotCounts(),
+      },
+      spellbook: {
+        known: [...this.spellbook.known], mana: this.spellbook.mana, maxMana: this.spellbook.maxMana,
+      },
+      hotbar: {
+        slots: this.hotbar.slots.map((s) => (s ? { ...s } : null)),
+        selected: this.hotbar.selected,
+      },
+      corruption: {
+        points: this.corruption.points, tierReached: this.corruption.tierReached,
+        mutations: [...this.corruption.mutations], graces: this.corruption.graces,
+      },
+      progression: { level: this.progression.level, xp: this.progression.xp },
+      levelHpBonus: this.levelHpBonus,
+      levelDamageBonus: this.levelDamageBonus,
+      kills: this.kills,
+      time: this.time,
+      deepestGate: this.deepestGate,
+      appliedChaosTier: this.appliedChaosTier,
+      shrineUses: [...this.shrineUses.entries()],
+      healerTimes: [...this.healerTimes.entries()],
+      quest: {
+        idx: this.questIdx,
+        activeId: this.questActive ? this.questActive.def.id : null,
+        killsAtAccept: this.questActive ? this.questActive.killsAtAccept : 0,
+        notified: this.questNotified,
+      },
+    };
+  }
+
+  /**
+   * Rebuild a suspended run. Maps regenerate from the seed (so the current
+   * floor's enemies and loose loot are fresh), while all of the player's
+   * hard-won progress — level, gold, inventory, corruption, mutations,
+   * quest — is restored exactly, and the player is placed where they left off.
+   */
+  private restoreFrom(save: RunSave): void {
+    this.restoring = true;
+
+    // decay the overworld to match how far the chaos had spread
+    this.reapplyChaosForRestore(save.appliedChaosTier);
+    this.appliedChaosTier = save.appliedChaosTier;
+
+    // corruption first, so derived stats recompute from the right mutations
+    this.corruption.points = save.corruption.points;
+    this.corruption.tierReached = save.corruption.tierReached;
+    this.corruption.mutations = [...save.corruption.mutations];
+    this.corruption.graces = save.corruption.graces;
+    this.fx = mergeEffects(this.baseFx, computeMutationEffects(this.corruption.mutations));
+
+    this.progression.level = save.progression.level;
+    this.progression.xp = save.progression.xp;
+    this.levelHpBonus = save.levelHpBonus;
+    this.levelDamageBonus = save.levelDamageBonus;
+
+    this.inventory.weapon = save.inventory.weapon;
+    this.inventory.hasKey = save.inventory.hasKey;
+    this.inventory.hasBow = save.inventory.hasBow;
+    this.inventory.arrows = save.inventory.arrows;
+    this.inventory.gold = save.inventory.gold;
+    this.inventory.setCounts(save.inventory.counts);
+
+    this.spellbook.known.length = 0;
+    for (const id of save.spellbook.known) this.spellbook.learn(id);
+    this.spellbook.maxMana = save.spellbook.maxMana;
+    this.spellbook.mana = Math.min(save.spellbook.mana, save.spellbook.maxMana);
+
+    for (let i = 0; i < this.hotbar.slots.length; i++) {
+      const s = save.hotbar.slots[i];
+      this.hotbar.slots[i] = s ? { ...s } : null;
+    }
+    this.hotbar.selected = save.hotbar.selected;
+
+    this.kills = save.kills;
+    this.time = save.time;
+    this.deepestGate = save.deepestGate;
+    this.shrineUses = new Map(save.shrineUses);
+    this.healerTimes = new Map(save.healerTimes);
+
+    this.questIdx = save.quest.idx;
+    this.questNotified = save.quest.notified;
+    this.questActive = null;
+    if (save.quest.activeId) {
+      const def = QUESTS.find((q) => q.id === save.quest.activeId);
+      if (def) this.questActive = { def, killsAtAccept: save.quest.killsAtAccept };
+    }
+
+    // enter the saved site (fresh maps), then pin the player exactly where they were
+    const ref: SiteRef = save.site.kind === 'world'
+      ? { kind: 'world' }
+      : { kind: 'dungeon', id: save.site.id as DungeonId, depth: save.site.depth };
+    this.activateSite(ref, null);
+    this.player.x = save.player.x;
+    this.player.y = save.player.y;
+    this.player.maxHp = save.player.maxHp;
+    this.player.hp = save.player.hp;
+    this.player.facing = save.player.facing as Player['facing'];
+    this.player.hasteT = save.player.hasteT;
+    this.player.stoneskinT = save.player.stoneskinT;
+    if (save.player.poisoned) this.player.applyPoison();
+    this.recomputeFog();
+
+    this.restoring = false;
+  }
+
+  /** Re-run chaos map mutations (terrain decay, fallen far village) up to a tier. */
+  private reapplyChaosForRestore(tier: number): void {
+    if (tier <= 0) return;
+    const rng = new Rng((this.baseSeed ^ 0x00c0ffee) >>> 0);
+    for (let i = 0; i < tier && i < CHAOS_EVENTS.length; i++) {
+      CHAOS_EVENTS[i]!.apply(this.world, rng);
+    }
+    const worldSite = this.sites.get('world');
+    if (worldSite) worldSite.npcs = this.worldNpcsFromSpawns();
+  }
+
+  private updatePauseMenu(input: InputState, game: Game): void {
+    if (input.pause) {
+      this.paused = false;
+      return;
+    }
+    if (input.menuUp) this.pauseCursor = (this.pauseCursor + this.pauseOptions.length - 1) % this.pauseOptions.length;
+    if (input.menuDown) this.pauseCursor = (this.pauseCursor + 1) % this.pauseOptions.length;
+    const confirm = input.interact || input.click || (input.attack && !input.click);
+    if (!confirm) return;
+    switch (this.pauseCursor) {
+      case 0:
+        this.paused = false;
+        break;
+      case 1: {
+        const save = this.serialize();
+        if (save) writeSave(save);
+        game.switchScene(this.flow.title());
+        break;
+      }
+      case 2:
+        clearSave();
+        game.switchScene(this.flow.title());
+        break;
+      default:
+        break;
+    }
   }
 
   // --- World interface ---
@@ -296,19 +475,22 @@ export class PlayScene implements Scene, World {
     for (const s of this.world.goldSpawns) {
       site.pickups.push({ item: null, gold: s.amount, x: s.x * TILE + 3, y: s.y * TILE + 3, dead: false });
     }
-    for (const n of this.world.npcSpawns) {
-      site.npcs.push({
-        x: n.x * TILE + 3, y: n.y * TILE + 2, w: 10, h: 12,
-        wanderX: n.x * TILE, wanderY: n.y * TILE,
-        wanderTimer: this.rng.range(0.5, 3),
-        village: n.village, kind: n.kind, line: n.line,
-        stock:
-          n.kind === 'merchant'
-            ? n.village === 'castle' ? castleStock(this.rng) : merchantStock(0, this.rng)
-            : undefined,
-      });
-    }
+    site.npcs = this.worldNpcsFromSpawns();
     this.sites.set('world', site);
+  }
+
+  /** Build the overworld NPC list from the (possibly chaos-thinned) spawns. */
+  private worldNpcsFromSpawns(): Npc[] {
+    return this.world.npcSpawns.map((n) => ({
+      x: n.x * TILE + 3, y: n.y * TILE + 2, w: 10, h: 12,
+      wanderX: n.x * TILE, wanderY: n.y * TILE,
+      wanderTimer: this.rng.range(0.5, 3),
+      village: n.village, kind: n.kind, line: n.line,
+      stock:
+        n.kind === 'merchant'
+          ? n.village === 'castle' ? castleStock(this.rng) : merchantStock(0, this.rng)
+          : undefined,
+    }));
   }
 
   private getOrCreateSite(ref: SiteRef): { site: SiteState; isNew: boolean } {
@@ -373,7 +555,9 @@ export class PlayScene implements Scene, World {
       this.deepestGate = Math.max(this.deepestGate, ref.depth);
     }
     // pressing deeper for the first time steadies the mind a little
-    if (ref.kind === 'dungeon' && isNew && ref.depth > 1) cleanse(this.corruption, STAIRS_CLEANSE);
+    if (ref.kind === 'dungeon' && isNew && ref.depth > 1 && !this.restoring) {
+      cleanse(this.corruption, STAIRS_CLEANSE);
+    }
     this.placePlayerNear(arriveAt ?? site.floor.spawn);
     this.player.kx = 0;
     this.player.ky = 0;
@@ -449,6 +633,7 @@ export class PlayScene implements Scene, World {
   private endRun(game: Game, cause: string, victory: boolean): void {
     if (this.ending) return;
     this.ending = true;
+    clearSave(); // the run is over — no suspended save to resume
     const stats: RunStats = {
       identity: identityOf(this.character),
       depth: this.deepestGate,
@@ -465,6 +650,13 @@ export class PlayScene implements Scene, World {
   // --- update ---
 
   update(dt: number, input: InputState, game: Game): void {
+    // Pause menu (Resume / Save & Quit / Abandon) freezes everything
+    if (this.paused) {
+      this.hud.update(dt);
+      this.updatePauseMenu(input, game);
+      return;
+    }
+
     // Talking or trading pauses the world (the corruption clock included)
     if (this.dialog) {
       this.hud.update(dt);
@@ -473,6 +665,7 @@ export class PlayScene implements Scene, World {
     }
 
     // Inventory/spellbook window pauses the world (the corruption clock included)
+    const windowWasOpen = this.window.open;
     if (input.inventory || (this.window.open && input.pause)) this.window.toggle();
     if (this.window.open) {
       this.hud.update(dt);
@@ -481,6 +674,13 @@ export class PlayScene implements Scene, World {
         this.window.toggle(); // close so the effect (throw/bolt aim) reads naturally
         this.activateEntry(action.entry, game);
       }
+      return;
+    }
+    // Esc with nothing else open opens the pause menu (but not the same Esc
+    // that just closed the bag)
+    if (input.pause && !windowWasOpen) {
+      this.paused = true;
+      this.pauseCursor = 0;
       return;
     }
 
@@ -1457,7 +1657,9 @@ export class PlayScene implements Scene, World {
     }
 
     r.drawCorruptionVignette(this.corruption.points, this.time);
-    if (this.flashT > 0) r.flashScreen(this.flashColor, Math.min(0.5, this.flashT * 2));
+    if (this.flashT > 0 && !getSettings().reduceFlashing) {
+      r.flashScreen(this.flashColor, Math.min(0.5, this.flashT * 2));
+    }
 
     const questView = this.questActive
       ? {
@@ -1487,6 +1689,15 @@ export class PlayScene implements Scene, World {
         lines: this.dialog.lines,
         entries: this.dialog.choices.map((c) => ({ label: c.label, dim: c.dim })),
         cursor: this.dialog.cursor,
+      });
+    }
+
+    if (this.paused) {
+      drawDialogPanel(ctx, {
+        title: 'Paused',
+        lines: ['The corruption is held at bay... for now.'],
+        entries: this.pauseOptions.map((label) => ({ label })),
+        cursor: this.pauseCursor,
       });
     }
   }

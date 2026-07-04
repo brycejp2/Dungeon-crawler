@@ -8,6 +8,8 @@ export type SfxId =
 
 export interface AudioPort {
   play(sfx: SfxId): void;
+  muted: boolean;
+  masterVolume: number; // 0..1
 }
 
 interface Note {
@@ -76,6 +78,7 @@ const SFX: Record<SfxId, Note[]> = {
 export class WebAudio implements AudioPort {
   private ctx: AudioContext | null = null;
   muted = false;
+  masterVolume = 1; // 0..1, set from settings
 
   /** Call once from a user-gesture handler; AudioContext requires it. */
   unlock(): void {
@@ -93,7 +96,8 @@ export class WebAudio implements AudioPort {
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
       const start = t0 + (n.delay ?? 0);
-      const vol = n.vol ?? 0.2;
+      const vol = (n.vol ?? 0.2) * this.masterVolume;
+      if (vol <= 0.0001) continue;
       osc.type = n.type;
       osc.frequency.setValueAtTime(n.freq, start);
       if (n.slide) osc.frequency.exponentialRampToValueAtTime(Math.max(1, n.slide), start + n.dur);
@@ -108,5 +112,7 @@ export class WebAudio implements AudioPort {
 
 /** No-op backend for tests / headless. */
 export class NullAudio implements AudioPort {
+  muted = false;
+  masterVolume = 1;
   play(): void {}
 }

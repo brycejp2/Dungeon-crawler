@@ -26,11 +26,17 @@ export interface RunStats {
 
 /** Scene factories wired up in main.ts so scenes and PlayScene never import each other. */
 export interface SceneFlow {
-  title(): Scene;
+  title(): Scene; // the main menu
   charCreate(): Scene;
   newRun(character?: CharacterDef): Scene;
+  continueRun(): Scene | null; // resume a suspended run, or null if none/failed
+  highScores(): Scene;
+  settings(): Scene;
+  about(): Scene;
   gameOver(stats: RunStats): Scene;
   victory(stats: RunStats): Scene;
+  /** True when a suspended run exists to resume. */
+  hasSave(): boolean;
 }
 
 export class Game {

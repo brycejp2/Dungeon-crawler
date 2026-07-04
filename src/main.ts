@@ -5,10 +5,15 @@ import { VIEW_W, VIEW_H, PX } from './config';
 import { Game } from './game';
 import type { Scene, SceneFlow, RunStats } from './game';
 import { WebAudio } from './audio';
-import { TitleScene, GameOverScene, VictoryScene } from './scenes';
+import {
+  MenuScene, HighScoresScene, SettingsScene, AboutScene, GameOverScene, VictoryScene,
+} from './scenes';
 import { CharCreateScene } from './charCreate';
 import { PlayScene } from './playScene';
 import type { CharacterDef } from './character';
+import {
+  loadSettings, loadSave, clearSave, writeSave, hasSave, submitScore,
+} from './storage';
 
 const visible = document.getElementById('game') as HTMLCanvasElement;
 const visibleCtx = visible.getContext('2d')!;
@@ -37,14 +42,22 @@ const audio = new WebAudio();
 window.addEventListener('keydown', () => audio.unlock(), { once: true });
 window.addEventListener('pointerdown', () => audio.unlock(), { once: true });
 
+// Apply persisted settings to the audio backend on boot.
+const settings = loadSettings();
+audio.muted = !settings.sound;
+audio.masterVolume = settings.sound ? settings.volume / 100 : 0;
+
 // Dev helpers: ?seed=123&floor=7 jumps straight into a run for testing.
 const params = new URLSearchParams(location.search);
 const devSeed = params.has('seed') ? Number(params.get('seed')) : undefined;
 const devFloor = params.has('floor') ? Number(params.get('floor')) : undefined;
 
 const flow: SceneFlow = {
-  title: (): Scene => new TitleScene(flow),
-  charCreate: (): Scene => new CharCreateScene(flow),
+  title: (): Scene => new MenuScene(flow),
+  charCreate: (): Scene => {
+    clearSave(); // starting a new game abandons any suspended run
+    return new CharCreateScene(flow);
+  },
   newRun: (character?: CharacterDef): Scene =>
     new PlayScene(
       flow,
@@ -52,8 +65,20 @@ const flow: SceneFlow = {
       devFloor ?? 0, // 0 = begin on the overworld; ?floor=N jumps into the Chaos Gate
       character, // undefined => random character (dev shortcut runs)
     ),
-  gameOver: (stats: RunStats): Scene => new GameOverScene(stats, flow),
-  victory: (stats: RunStats): Scene => new VictoryScene(stats, flow),
+  continueRun: (): Scene | null => {
+    const save = loadSave();
+    if (!save) return null;
+    clearSave(); // single-use: consumed on resume, re-written when the run is next suspended
+    return new PlayScene(flow, save.seed, 0, undefined, save);
+  },
+  highScores: (): Scene => new HighScoresScene(flow),
+  settings: (): Scene => new SettingsScene(flow),
+  about: (): Scene => new AboutScene(flow),
+  gameOver: (stats: RunStats): Scene =>
+    new GameOverScene(stats, flow, submitScore(stats, false).qualified),
+  victory: (stats: RunStats): Scene =>
+    new VictoryScene(stats, flow, submitScore(stats, true).qualified),
+  hasSave: (): boolean => hasSave(),
 };
 
 const game = new Game(ctx, audio);
@@ -65,6 +90,18 @@ game.input.attachPointer(visible, (clientX, clientY) => {
 });
 game.switchScene(devFloor !== undefined ? flow.newRun() : flow.title());
 game.start();
+
+// Autosave a live run when the tab is hidden or closed, so the player can
+// Continue exactly where they left off. A finished run serializes to null.
+function autosaveOnExit(): void {
+  const scene = game.currentScene;
+  if (scene instanceof PlayScene) {
+    const save = scene.serialize();
+    if (save) writeSave(save);
+  }
+}
+window.addEventListener('pagehide', autosaveOnExit);
+window.addEventListener('beforeunload', autosaveOnExit);
 
 // ?debug=1 exposes the game for automated end-to-end tests. Dev-only escape hatch.
 if (params.has('debug')) {

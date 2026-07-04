@@ -150,6 +150,16 @@ export class Inventory {
     return true;
   }
 
+  /** Snapshot consumable counts for saving. */
+  snapshotCounts(): [ItemId, number][] {
+    return [...this.counts.entries()];
+  }
+
+  /** Restore consumable counts from a save. */
+  setCounts(entries: [ItemId, number][]): void {
+    this.counts = new Map(entries);
+  }
+
   /** Consumables currently held (for the inventory window). */
   held(): { id: ItemId; count: number }[] {
     return CONSUMABLE_ORDER
