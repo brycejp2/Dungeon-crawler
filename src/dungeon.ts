@@ -8,6 +8,7 @@ import {
 } from './config';
 import { Rng } from './rng';
 import type { ItemId } from './items';
+import { goldPileFor, type FriendlyKind } from './friendly';
 
 export enum Tile {
   Wall = 0,
@@ -60,6 +61,8 @@ export interface FloorData {
   keyPos: Pt | null;
   enemySpawns: { kind: EnemyKind; x: number; y: number }[];
   itemSpawns: { item: ItemId; x: number; y: number }[];
+  goldSpawns: { x: number; y: number; amount: number }[];
+  friendlySpawns: { kind: FriendlyKind; x: number; y: number }[];
 }
 
 export function roomCenter(r: Room): Pt {
@@ -389,12 +392,39 @@ function tryGenerate(seed: number, depth: number, opts: FloorOpts): FloorData | 
     }
   }
 
-  // 8. Enemies: only in rooms far enough from spawn
+  // 8. Friendly encounters: trapped merchants, priests, hermits get their own
+  // safe rooms (no enemies spawn there) so meeting them is a breather.
+  const friendlySpawns: FloorData['friendlySpawns'] = [];
+  const friendlyRooms = new Set<Room>();
+  const placeFriendly = (kind: FriendlyKind): void => {
+    const candidates = rooms.filter(
+      (r) => r !== spawnRoom && r !== stairsRoom && !friendlyRooms.has(r),
+    );
+    if (candidates.length === 0) return;
+    const room = rng.pick(candidates);
+    const pos = randomRoomTile(rng, room, taken, w, tiles);
+    if (pos) {
+      friendlySpawns.push({ kind, x: pos.x, y: pos.y });
+      friendlyRooms.add(room);
+    }
+  };
+  if (opts.schedule ?? true) {
+    // the Chaos Gate: scheduled encounters on the long crawl down
+    if (depth === 2 || depth === 5) placeFriendly('merchant');
+    if (depth === 3 || depth === 6) placeFriendly('priest');
+    if (!isBossFloor && rng.chance(0.35)) placeFriendly('hermit');
+  } else {
+    // side caves: a hermit midway, sometimes a trader by the treasure
+    if (depth === 2) placeFriendly('hermit');
+    if (isLastFloor && rng.chance(0.5)) placeFriendly('merchant');
+  }
+
+  // 9. Enemies: only in rooms far enough from spawn, never in friendly rooms
   const enemySpawns: FloorData['enemySpawns'] = [];
   const { kinds, weights } = enemyWeights(depth);
   const enemyCount = isBossFloor ? 4 : ENEMY_BASE_COUNT + ENEMY_PER_DEPTH * depth;
   const farRooms = rooms.filter((r) => {
-    if (r === spawnRoom) return false;
+    if (r === spawnRoom || friendlyRooms.has(r)) return false;
     const c = roomCenter(r);
     return dist[c.y * w + c.x]! >= SPAWN_SAFE_DIST;
   });
@@ -414,7 +444,7 @@ function tryGenerate(seed: number, depth: number, opts: FloorOpts): FloorData | 
     enemySpawns.push({ kind: 'boss', x: stairsCenter.x, y: stairsCenter.y });
   }
 
-  // 9. Items
+  // 10. Items
   const itemSpawns: FloorData['itemSpawns'] = [];
   const dropRooms = rooms.filter((r) => r !== spawnRoom);
   const placeItem = (item: ItemId): void => {
@@ -452,5 +482,17 @@ function tryGenerate(seed: number, depth: number, opts: FloorOpts): FloorData | 
   }
   if (keyPos) itemSpawns.push({ item: 'key', x: keyPos.x, y: keyPos.y });
 
-  return { tiles, w, h, depth, rooms, spawn, downStairs, doors, keyPos, enemySpawns, itemSpawns };
+  // 11. Gold piles: loose coin scattered through the rooms
+  const goldSpawns: FloorData['goldSpawns'] = [];
+  const pileCount = rng.int(2, 4);
+  for (let i = 0; i < pileCount; i++) {
+    const room = rng.pick(dropRooms.length > 0 ? dropRooms : rooms);
+    const pos = randomRoomTile(rng, room, taken, w, tiles);
+    if (pos) goldSpawns.push({ x: pos.x, y: pos.y, amount: goldPileFor(depth, rng) });
+  }
+
+  return {
+    tiles, w, h, depth, rooms, spawn, downStairs, doors, keyPos,
+    enemySpawns, itemSpawns, goldSpawns, friendlySpawns,
+  };
 }

@@ -46,6 +46,7 @@ export class Hud {
     progression: Progression,
     time: number,
     contextHint = '',
+    quest: { desc: string; done: number; target: number; ready: boolean } | null = null,
   ): void {
     ctx.save();
     ctx.textBaseline = 'top';
@@ -77,6 +78,10 @@ export class Hud {
     ctx.font = FONT_TINY;
     ctx.fillStyle = '#ffd040';
     ctx.fillText(`Lv ${progression.level}`, 4, 26);
+
+    // --- gold, next to the level ---
+    ctx.fillStyle = '#ffd040';
+    ctx.fillText(`$${inventory.gold}`, 28, 26);
 
     // --- status indicators (poison, buffs) right of the bars ---
     let statusX = 66;
@@ -172,6 +177,18 @@ export class Hud {
       ctx.textAlign = 'left';
     }
 
+    // --- quest tracker, right side above the bar ---
+    if (quest) {
+      ctx.font = FONT_TINY;
+      ctx.textAlign = 'right';
+      ctx.fillStyle = quest.ready ? '#68e068' : '#c8b060';
+      const label = quest.ready
+        ? 'QUEST DONE - see Capt. Aldric'
+        : `${quest.desc}: ${quest.done}/${quest.target}`;
+      ctx.fillText(label, VIEW_W - 6, barY - 10);
+      ctx.textAlign = 'left';
+    }
+
     // --- message log above the bar ---
     ctx.font = FONT;
     let my = VIEW_H - 30;
@@ -257,4 +274,58 @@ export class Hud {
     ctx.fillRect(x + 3, y + 5, 1, 1);
     ctx.fillRect(x + 5, y + 5, 1, 1);
   }
+}
+
+// --- NPC dialog / shop panel -------------------------------------------------
+
+export interface DialogEntry {
+  label: string;
+  dim?: boolean; // unaffordable / sold out / not applicable
+}
+
+export interface DialogView {
+  title: string;
+  lines: string[]; // flavor text above the choices
+  entries: DialogEntry[];
+  cursor: number;
+}
+
+/** Centered bordered panel for talking/trading; world is paused behind it. */
+export function drawDialogPanel(ctx: CanvasRenderingContext2D, view: DialogView): void {
+  const w = 260;
+  const rows = view.lines.length + view.entries.length;
+  const h = 42 + rows * 12;
+  const x = Math.floor((VIEW_W - w) / 2);
+  const y = Math.floor((VIEW_H - h) / 2);
+  ctx.save();
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = 'rgba(8, 8, 16, 0.94)';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = '#8a7a3a';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 1.5, y + 1.5, w - 3, h - 3);
+  ctx.font = FONT;
+  ctx.fillStyle = '#ffd040';
+  ctx.fillText(view.title, x + 10, y + 8);
+  let ly = y + 22;
+  for (const line of view.lines) {
+    ctx.fillStyle = '#9a9ab0';
+    ctx.fillText(line, x + 12, ly);
+    ly += 12;
+  }
+  view.entries.forEach((e, i) => {
+    if (i === view.cursor) {
+      ctx.fillStyle = 'rgba(255, 208, 64, 0.12)';
+      ctx.fillRect(x + 6, ly - 2, w - 12, 11);
+      ctx.fillStyle = '#ffd040';
+      ctx.fillText('>', x + 8, ly);
+    }
+    ctx.fillStyle = e.dim ? '#606078' : i === view.cursor ? '#ffe8a0' : '#e8e0c8';
+    ctx.fillText(e.label, x + 18, ly);
+    ly += 12;
+  });
+  ctx.fillStyle = '#707088';
+  ctx.font = FONT_TINY;
+  ctx.fillText('Up/Down: select   F/Enter: confirm   Esc: leave', x + 10, y + h - 10);
+  ctx.restore();
 }

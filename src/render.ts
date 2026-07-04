@@ -673,6 +673,87 @@ function paintVillager(c: CanvasRenderingContext2D): void {
   c.fillRect(14, 7, 2, 3);
 }
 
+/** Shared humanoid frame for friendly NPCs, dressed by palette. */
+function paintFriendly(
+  c: CanvasRenderingContext2D,
+  robe: string, robeLit: string, belt: string, skin: string, hair: string,
+  extra?: (c: CanvasRenderingContext2D) => void,
+): void {
+  // logical 12x14 -> 24x28, same frame as the villager
+  c.fillStyle = '#4a2e16';
+  c.fillRect(4, 24, 6, 4); // boots
+  c.fillRect(14, 24, 6, 4);
+  c.fillStyle = robe;
+  c.fillRect(2, 12, 20, 12); // robe/tunic
+  c.fillStyle = robeLit;
+  c.fillRect(3, 12, 18, 8);
+  c.fillStyle = belt;
+  c.fillRect(3, 20, 18, 2);
+  c.fillStyle = skin;
+  c.fillRect(5, 2, 14, 11); // head
+  c.fillStyle = hair;
+  c.fillRect(4, 0, 16, 4); // hair/hood top
+  c.fillStyle = '#1a1a2e';
+  c.fillRect(8, 7, 2, 3); // eyes
+  c.fillRect(14, 7, 2, 3);
+  extra?.(c);
+}
+
+function paintMerchant(c: CanvasRenderingContext2D): void {
+  paintFriendly(c, '#6e4a20', '#8a6030', '#3e2a12', '#e8c090', '#4a3018', (cc) => {
+    // coin pouch on the belt
+    cc.fillStyle = '#ffd040';
+    cc.fillRect(16, 19, 4, 4);
+    cc.fillStyle = '#c8a030';
+    cc.fillRect(16, 21, 4, 2);
+  });
+}
+
+function paintPriest(c: CanvasRenderingContext2D): void {
+  paintFriendly(c, '#c8c4b4', '#e8e4d4', '#c8a030', '#e0c8a8', '#d8d4c4', (cc) => {
+    // golden circle of Order on the chest
+    cc.fillStyle = '#ffd040';
+    cc.fillRect(10, 14, 4, 4);
+    cc.fillStyle = '#e8e4d4';
+    cc.fillRect(11, 15, 2, 2);
+  });
+}
+
+function paintHermit(c: CanvasRenderingContext2D): void {
+  paintFriendly(c, '#4e4e5e', '#5e5e70', '#38383f', '#d8b090', '#4e4e5e', (cc) => {
+    // deep hood shading over the brow
+    cc.fillStyle = '#38383f';
+    cc.fillRect(4, 0, 16, 6);
+    cc.fillRect(5, 5, 3, 3);
+    cc.fillRect(16, 5, 3, 3);
+  });
+}
+
+function paintQuestgiver(c: CanvasRenderingContext2D): void {
+  paintFriendly(c, '#7a2020', '#9a3030', '#4a2e16', '#e0b088', '#6a4a2a', (cc) => {
+    // steel pauldrons and a sword at the hip
+    cc.fillStyle = '#a8b0c0';
+    cc.fillRect(1, 11, 5, 4);
+    cc.fillRect(18, 11, 5, 4);
+    cc.fillStyle = '#c8d0dc';
+    cc.fillRect(0, 16, 2, 9);
+  });
+}
+
+function paintGold(c: CanvasRenderingContext2D): void {
+  // 10x10 coin pile
+  c.fillStyle = '#c8a030';
+  c.fillRect(2, 6, 6, 3);
+  c.fillRect(1, 7, 8, 2);
+  c.fillStyle = '#ffd040';
+  c.fillRect(2, 5, 3, 2);
+  c.fillRect(5, 4, 3, 2);
+  c.fillRect(3, 6, 4, 1);
+  c.fillStyle = '#fff0a0';
+  c.fillRect(3, 5, 1, 1);
+  c.fillRect(6, 4, 1, 1);
+}
+
 function paintItem(c: CanvasRenderingContext2D, item: ItemId): void {
   // 10x10 icons
   switch (item) {
@@ -841,6 +922,8 @@ export class SpriteAtlas {
   enemiesCorrupt: Record<Exclude<EnemyKind, 'boss'>, HTMLCanvasElement>;
   boss: HTMLCanvasElement;
   villager: HTMLCanvasElement;
+  npcs: Record<'villager' | 'merchant' | 'priest' | 'hermit' | 'questgiver', HTMLCanvasElement>;
+  gold: HTMLCanvasElement;
   tiles: Map<Tile, HTMLCanvasElement>;
   floorVariants: HTMLCanvasElement[];
   grassVariants: HTMLCanvasElement[];
@@ -866,6 +949,14 @@ export class SpriteAtlas {
     };
     this.boss = mkSprite(26, 26, paintBoss);
     this.villager = mkSprite(12, 14, paintVillager);
+    this.npcs = {
+      villager: this.villager,
+      merchant: mkSprite(12, 14, paintMerchant),
+      priest: mkSprite(12, 14, paintPriest),
+      hermit: mkSprite(12, 14, paintHermit),
+      questgiver: mkSprite(12, 14, paintQuestgiver),
+    };
+    this.gold = mkScaled(10, 10, paintGold);
     this.tiles = new Map<Tile, HTMLCanvasElement>([
       [Tile.Wall, mkSprite(TILE, TILE, paintTileWall)],
       [Tile.CorruptFloor, mkSprite(TILE, TILE, paintTileCorrupt)],
@@ -1014,7 +1105,7 @@ export class Renderer {
   drawPickup(p: Pickup, fog: Uint8Array, floorW: number, time: number): void {
     if (!this.visibleAt(fog, floorW, p.x + 5, p.y + 5)) return;
     const bob = Math.sin(time * 4 + p.x) * 1.5;
-    const sprite = this.atlas.items.get(p.item)!;
+    const sprite = p.item === null ? this.atlas.gold : this.atlas.items.get(p.item)!;
     this.ctx.drawImage(sprite, snap(p.x - this.camX), snap(p.y - this.camY + bob), 10, 10);
   }
 
@@ -1064,17 +1155,36 @@ export class Renderer {
     this.ctx.drawImage(sprite, snap(p.cx - lw / 2 - this.camX), snap(p.y + p.h - lh - this.camY), lw, lh);
   }
 
-  /** Villager NPC; shows their line as a tiny speech text when the player is near. */
-  drawNpc(n: { x: number; y: number; line: string }, fog: Uint8Array, floorW: number, nearPlayer: boolean): void {
+  /**
+   * NPC of any kind. Villagers show their line as a speech bubble when near;
+   * `marker` draws a bouncing indicator ('!' = quest available/ready).
+   */
+  drawNpc(
+    n: { x: number; y: number; kind: keyof SpriteAtlas['npcs']; line?: string },
+    fog: Uint8Array,
+    floorW: number,
+    nearPlayer: boolean,
+    marker: string | null,
+    time: number,
+  ): void {
     if (!this.visibleAt(fog, floorW, n.x + 6, n.y + 7)) return;
     const { ctx } = this;
-    const sprite = this.atlas.villager;
+    const sprite = this.atlas.npcs[n.kind];
     const lw = sprite.width / PX;
     const lh = sprite.height / PX;
     const sx = snap(n.x - this.camX);
     const sy = snap(n.y - this.camY);
     ctx.drawImage(sprite, sx, sy, lw, lh);
-    if (nearPlayer) {
+    if (marker) {
+      const bob = Math.sin(time * 5) * 1.5;
+      ctx.font = '8px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ffd040';
+      ctx.fillText(marker, sx + lw / 2, sy - 8 + bob);
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+    }
+    if (nearPlayer && n.line) {
       ctx.font = '6px monospace';
       ctx.textAlign = 'center';
       ctx.fillStyle = 'rgba(10, 10, 18, 0.75)';

@@ -128,6 +128,47 @@ describe('generateFloor', () => {
     }
   });
 
+  it('friendly encounters appear on schedule in the Chaos Gate', () => {
+    for (const seed of SEEDS.slice(0, 10)) {
+      expect(generateFloor(seed, 2).friendlySpawns.some((s) => s.kind === 'merchant')).toBe(true);
+      expect(generateFloor(seed, 5).friendlySpawns.some((s) => s.kind === 'merchant')).toBe(true);
+      expect(generateFloor(seed, 3).friendlySpawns.some((s) => s.kind === 'priest')).toBe(true);
+      expect(generateFloor(seed, 6).friendlySpawns.some((s) => s.kind === 'priest')).toBe(true);
+      // the boss floor offers no comforts
+      expect(generateFloor(seed, FINAL_DEPTH).friendlySpawns).toHaveLength(0);
+    }
+  });
+
+  it('side dungeons shelter a hermit on their middle floor', () => {
+    for (const seed of SEEDS.slice(0, 10)) {
+      const floor = generateFloor(seed, 2, { bossFloor: false, schedule: false });
+      expect(floor.friendlySpawns.some((s) => s.kind === 'hermit')).toBe(true);
+    }
+  });
+
+  it('no enemies spawn in a friendly NPC\'s room', () => {
+    for (const { floor, seed, depth } of floors) {
+      for (const f of floor.friendlySpawns) {
+        const room = floor.rooms.find((r) => inRoom(r, f.x, f.y))!;
+        expect(room, `friendly in a room seed=${seed} depth=${depth}`).toBeDefined();
+        for (const e of floor.enemySpawns) {
+          expect(inRoom(room, e.x, e.y), `enemy shares friendly room seed=${seed} depth=${depth}`).toBe(false);
+        }
+      }
+    }
+  });
+
+  it('every floor scatters reachable gold piles', () => {
+    for (const { floor, seed, depth } of floors) {
+      expect(floor.goldSpawns.length, `seed=${seed} depth=${depth}`).toBeGreaterThanOrEqual(2);
+      const dist = bfsDistances(floor.tiles, floor.w, floor.h, floor.spawn, false);
+      for (const g of floor.goldSpawns) {
+        expect(g.amount).toBeGreaterThan(0);
+        expect(dist[g.y * floor.w + g.x]!, `gold reachable seed=${seed} depth=${depth}`).toBeGreaterThanOrEqual(0);
+      }
+    }
+  });
+
   it('down-stairs sits far from spawn (max-distance room)', () => {
     for (const { floor, depth } of floors) {
       if (depth >= FINAL_DEPTH || !floor.downStairs) continue;

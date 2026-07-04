@@ -4,7 +4,7 @@
 export type SfxId =
   | 'swing' | 'hit' | 'hurt' | 'pickup' | 'stairs' | 'potion'
   | 'mutation' | 'unlock' | 'die' | 'bossRoar' | 'victory' | 'shoot' | 'boom'
-  | 'levelup';
+  | 'levelup' | 'coin' | 'quest';
 
 export interface AudioPort {
   play(sfx: SfxId): void;
@@ -33,6 +33,15 @@ const SFX: Record<SfxId, Note[]> = {
     { freq: 220, dur: 0.14, type: 'triangle', delay: 0.18, vol: 0.2 },
   ],
   potion: [{ freq: 520, dur: 0.2, type: 'sine', slide: 780, vol: 0.2 }],
+  coin: [
+    { freq: 1180, dur: 0.05, type: 'triangle', vol: 0.16 },
+    { freq: 1660, dur: 0.09, type: 'triangle', delay: 0.05, vol: 0.16 },
+  ],
+  quest: [
+    { freq: 520, dur: 0.09, type: 'triangle', vol: 0.18 },
+    { freq: 660, dur: 0.09, type: 'triangle', delay: 0.09, vol: 0.18 },
+    { freq: 880, dur: 0.14, type: 'triangle', delay: 0.18, vol: 0.18 },
+  ],
   mutation: [
     { freq: 300, dur: 0.25, type: 'sawtooth', slide: 150, vol: 0.25 },
     { freq: 450, dur: 0.3, type: 'sawtooth', slide: 100, delay: 0.1, vol: 0.2 },

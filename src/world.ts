@@ -14,8 +14,11 @@ export interface Village {
   healer: Pt;
 }
 
+export type WorldNpcKind = 'villager' | 'merchant' | 'questgiver';
+
 export interface NpcSpawn extends Pt {
-  village: 'home' | 'far';
+  village: 'home' | 'far' | 'castle';
+  kind: WorldNpcKind;
   line: string;
 }
 
@@ -239,22 +242,33 @@ function tryGenerateWorld(seed: number): WorldData | null {
   if (!adjacentReachable(home.shrine) || !adjacentReachable(home.healer)) return null;
   if (!adjacentReachable(far.shrine) || !adjacentReachable(far.healer)) return null;
 
-  // 7. Villagers
+  // 7. Villagers, merchants, and the quest captain
   const npcSpawns: NpcSpawn[] = [];
-  const placeNpcs = (bounds: Room, village: 'home' | 'far', lines: string[], count: number): void => {
-    for (let i = 0; i < count; i++) {
-      for (let tries = 0; tries < 30; tries++) {
-        const x = rng.int(bounds.x, bounds.x + bounds.w - 1);
-        const y = rng.int(bounds.y, bounds.y + bounds.h - 1);
-        if (isPassable(tiles[idx(x, y)] as Tile, false) && dist[idx(x, y)]! >= 0) {
-          npcSpawns.push({ x, y, village, line: lines[i % lines.length]! });
-          break;
-        }
+  const placeNpc = (
+    bounds: Room, village: 'home' | 'far' | 'castle', kind: WorldNpcKind, line: string,
+  ): boolean => {
+    for (let tries = 0; tries < 40; tries++) {
+      const x = rng.int(bounds.x, bounds.x + bounds.w - 1);
+      const y = rng.int(bounds.y, bounds.y + bounds.h - 1);
+      if (isPassable(tiles[idx(x, y)] as Tile, false) && dist[idx(x, y)]! >= 0) {
+        npcSpawns.push({ x, y, village, kind, line });
+        return true;
       }
     }
+    return false;
+  };
+  const placeNpcs = (bounds: Room, village: 'home' | 'far', lines: string[], count: number): void => {
+    for (let i = 0; i < count; i++) placeNpc(bounds, village, 'villager', lines[i % lines.length]!);
   };
   placeNpcs(homeBounds, 'home', rng.shuffle([...HOME_LINES]), 4);
   placeNpcs(farBounds, 'far', rng.shuffle([...FAR_LINES]), 3);
+  // every village keeps a merchant; the home village hosts Captain Aldric
+  if (!placeNpc(homeBounds, 'home', 'merchant', 'Fine wares for a doomed land.')) return null;
+  if (!placeNpc(farBounds, 'far', 'merchant', 'Buy now. Coin spends poorly in graves.')) return null;
+  if (!placeNpc(homeBounds, 'home', 'questgiver', 'The land bleeds. Help us cull the beasts.')) return null;
+  // the bandits' captive trader, deep inside the castle keep
+  const keepRoom: Room = { x: castle.x + 3, y: castle.y + 3, w: 3, h: 2 };
+  placeNpc(keepRoom, 'castle', 'merchant', 'They took my cart. My stock, though...');
 
   // 8. Wilderness monsters + castle bandits and their loot
   const enemySpawns: WorldData['enemySpawns'] = [];
@@ -270,6 +284,7 @@ function tryGenerateWorld(seed: number): WorldData | null {
     }
   }
   const itemSpawns: WorldData['itemSpawns'] = [];
+  const goldSpawns: WorldData['goldSpawns'] = [];
   const castleLoot: ItemId[] = ['sword2', 'elixir', 'arrows', 'arrows', 'bomb', 'healPotion'];
   let lootI = 0;
   for (const item of castleLoot) {
@@ -277,6 +292,14 @@ function tryGenerateWorld(seed: number): WorldData | null {
     const y = castle.y + castle.h - 3 - Math.floor(lootI / Math.max(1, castle.w - 4));
     if (isPassable(tiles[idx(x, y)] as Tile, false)) itemSpawns.push({ item, x, y });
     lootI += 2;
+  }
+  // the bandits' plundered gold, piled beside their loot
+  for (let i = 0; i < 3; i++) {
+    const x = castle.x + 2 + ((i * 2 + 1) % Math.max(1, castle.w - 4));
+    const y = castle.y + castle.h - 2;
+    if (isPassable(tiles[idx(x, y)] as Tile, false)) {
+      goldSpawns.push({ x, y, amount: rng.int(15, 30) });
+    }
   }
   // bandit garrison
   for (let i = 0; i < 4; i++) {
@@ -290,7 +313,7 @@ function tryGenerateWorld(seed: number): WorldData | null {
   return {
     tiles, w, h, depth: 0, rooms: [], spawn,
     downStairs: null, doors: [], keyPos: null,
-    enemySpawns, itemSpawns,
+    enemySpawns, itemSpawns, goldSpawns, friendlySpawns: [],
     gate, barrow, mine, castle,
     homeVillage: { name: 'Thornvale', bounds: homeBounds, shrine: home.shrine, healer: home.healer },
     farVillage: { name: 'Ashford', bounds: farBounds, shrine: far.shrine, healer: far.healer },

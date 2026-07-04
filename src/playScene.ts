@@ -34,8 +34,13 @@ import { newProgression, grantXp, xpForKill, type LevelUpBoon } from './progress
 import type { CharacterDef } from './character';
 import { Inventory, ITEMS } from './items';
 import type { ItemId } from './items';
+import {
+  FRIENDLY_NAMES, PRIEST_CLEANSE, PRIEST_PRICE, QUESTS,
+  castleStock, goldDropFor, hermitGift, hermitHint, merchantStock,
+} from './friendly';
+import type { FriendlyKind, QuestProgress, ShopEntry } from './friendly';
 import { Renderer, FOG_HIDDEN, FOG_EXPLORED, FOG_VISIBLE } from './render';
-import { Hud } from './hud';
+import { Hud, drawDialogPanel } from './hud';
 import type { AudioPort } from './audio';
 import { SPELLS, Spellbook, Hotbar } from './spells';
 import type { SpellId, HotbarEntry } from './spells';
@@ -95,8 +100,20 @@ interface Npc {
   wanderX: number;
   wanderY: number;
   wanderTimer: number;
-  village: 'home' | 'far';
+  village: 'home' | 'far' | 'castle' | null; // null = lives in a dungeon
+  kind: 'villager' | FriendlyKind;
   line: string;
+  stock?: ShopEntry[]; // merchants
+  hint?: string; // hermits
+  giftGiven?: boolean; // hermits hand over a little gold once
+}
+
+/** A modal talk/trade menu; the world (and corruption clock) pauses under it. */
+interface NpcDialog {
+  title: string;
+  lines: string[];
+  choices: { label: string; dim?: boolean; pick: (() => void) | null }[]; // null pick = leave
+  cursor: number;
 }
 
 /** A visited map with its live contents; sites persist for the whole run. */
@@ -141,6 +158,10 @@ export class PlayScene implements Scene, World {
   private healerTimes = new Map<string, number>();
   private wildTimer = WILD_SPAWN_INTERVAL;
   private contextHint = '';
+  private dialog: NpcDialog | null = null;
+  private questIdx = 0; // next quest in the captain's chain
+  private questActive: QuestProgress | null = null;
+  private questNotified = false;
   private corruption: CorruptionState;
   private inventory = new Inventory();
   private spellbook = new Spellbook();
@@ -272,12 +293,19 @@ export class PlayScene implements Scene, World {
     for (const s of this.world.itemSpawns) {
       site.pickups.push({ item: s.item, x: s.x * TILE + 3, y: s.y * TILE + 3, dead: false });
     }
+    for (const s of this.world.goldSpawns) {
+      site.pickups.push({ item: null, gold: s.amount, x: s.x * TILE + 3, y: s.y * TILE + 3, dead: false });
+    }
     for (const n of this.world.npcSpawns) {
       site.npcs.push({
         x: n.x * TILE + 3, y: n.y * TILE + 2, w: 10, h: 12,
         wanderX: n.x * TILE, wanderY: n.y * TILE,
         wanderTimer: this.rng.range(0.5, 3),
-        village: n.village, line: n.line,
+        village: n.village, kind: n.kind, line: n.line,
+        stock:
+          n.kind === 'merchant'
+            ? n.village === 'castle' ? castleStock(this.rng) : merchantStock(0, this.rng)
+            : undefined,
       });
     }
     this.sites.set('world', site);
@@ -308,6 +336,20 @@ export class PlayScene implements Scene, World {
     }
     for (const s of floor.itemSpawns) {
       site.pickups.push({ item: s.item, x: s.x * TILE + 3, y: s.y * TILE + 3, dead: false });
+    }
+    for (const s of floor.goldSpawns) {
+      site.pickups.push({ item: null, gold: s.amount, x: s.x * TILE + 3, y: s.y * TILE + 3, dead: false });
+    }
+    // friendly encounters waiting in the dark
+    for (const s of floor.friendlySpawns) {
+      site.npcs.push({
+        x: s.x * TILE + 3, y: s.y * TILE + 2, w: 10, h: 12,
+        wanderX: s.x * TILE, wanderY: s.y * TILE, wanderTimer: 0,
+        village: null, kind: s.kind, line: '',
+        stock: s.kind === 'merchant' ? merchantStock(ref.depth, this.rng) : undefined,
+        hint: s.kind === 'hermit' ? hermitHint(this.rng) : undefined,
+        giftGiven: false,
+      });
     }
     this.sites.set(key, site);
     return { site, isNew: true };
@@ -423,6 +465,13 @@ export class PlayScene implements Scene, World {
   // --- update ---
 
   update(dt: number, input: InputState, game: Game): void {
+    // Talking or trading pauses the world (the corruption clock included)
+    if (this.dialog) {
+      this.hud.update(dt);
+      this.updateDialog(this.dialog, input);
+      return;
+    }
+
     // Inventory/spellbook window pauses the world (the corruption clock included)
     if (input.inventory || (this.window.open && input.pause)) this.window.toggle();
     if (this.window.open) {
@@ -485,6 +534,8 @@ export class PlayScene implements Scene, World {
       this.updateWilderness(dt);
       this.updateWorldInteractions(input);
     }
+    // Friendly folk (merchants, priests, hermits, the captain) live everywhere
+    this.updateNpcInteraction(input);
 
     // Enemies
     for (const e of this.enemies) e.update(dt, this);
@@ -556,6 +607,13 @@ export class PlayScene implements Scene, World {
     for (const p of this.pickups) {
       const rect = { x: p.x, y: p.y, w: 10, h: 10 };
       if (!aabbOverlap(rect, this.player.rect())) continue;
+      if (p.item === null) {
+        p.dead = true;
+        this.inventory.gold += p.gold ?? 0;
+        this.hud.push(`You scoop up ${p.gold} gold.`);
+        this.audio.play('coin');
+        continue;
+      }
       const def = ITEMS[p.item];
       if (def.kind === 'tome') {
         p.dead = true;
@@ -593,7 +651,7 @@ export class PlayScene implements Scene, World {
       }
     }
 
-    // Reap the dead: kills grant experience
+    // Reap the dead: kills grant experience, gold, and quest progress
     for (const e of this.enemies) {
       if (e.dead) {
         this.kills++;
@@ -603,6 +661,21 @@ export class PlayScene implements Scene, World {
           this.audio.play('victory');
           this.endRun(game, 'Slew the Herald of Decay', true);
           return;
+        }
+        this.pickups.push({
+          item: null,
+          gold: goldDropFor(this.depth, this.rng),
+          x: e.cx - 5,
+          y: e.cy - 5,
+          dead: false,
+        });
+        if (
+          this.questActive && !this.questNotified &&
+          this.kills - this.questActive.killsAtAccept >= this.questActive.def.targetKills
+        ) {
+          this.questNotified = true;
+          this.hud.push('Quest complete! Report to Captain Aldric.');
+          this.audio.play('quest');
         }
       }
     }
@@ -711,6 +784,7 @@ export class PlayScene implements Scene, World {
 
   private updateNpcs(dt: number): void {
     for (const n of this.npcs) {
+      if (n.kind !== 'villager') continue; // traders and the captain hold their posts
       n.wanderTimer -= dt;
       if (n.wanderTimer <= 0) {
         n.wanderTimer = this.rng.range(1.5, 4);
@@ -801,6 +875,222 @@ export class PlayScene implements Scene, World {
       }
       return;
     }
+  }
+
+  // --- friendly NPCs: shops, cleansing rites, hints, quests ---
+
+  private nearestFriendly(): Npc | null {
+    for (const n of this.npcs) {
+      if (n.kind === 'villager') continue;
+      if (Math.hypot(n.x + 5 - this.player.cx, n.y + 7 - this.player.cy) < 24) return n;
+    }
+    return null;
+  }
+
+  private updateNpcInteraction(input: InputState): void {
+    if (this.contextHint !== '') return; // a shrine/healer prompt is already up
+    const n = this.nearestFriendly();
+    if (!n) return;
+    this.contextHint = `F: talk to ${FRIENDLY_NAMES[n.kind as FriendlyKind]}`;
+    if (input.interact) this.openNpc(n);
+  }
+
+  private openNpc(n: Npc): void {
+    switch (n.kind) {
+      case 'merchant': this.openMerchant(n); break;
+      case 'priest': this.openPriest(); break;
+      case 'hermit': this.openHermit(n); break;
+      case 'questgiver': this.openQuestgiver(); break;
+      default: break;
+    }
+  }
+
+  private updateDialog(d: NpcDialog, input: InputState): void {
+    if (input.pause) {
+      this.dialog = null;
+      return;
+    }
+    if (d.choices.length > 0) {
+      if (input.menuUp) d.cursor = (d.cursor + d.choices.length - 1) % d.choices.length;
+      if (input.menuDown) d.cursor = (d.cursor + 1) % d.choices.length;
+      if (input.interact || input.attack || input.click) {
+        const c = d.choices[d.cursor];
+        if (!c) return;
+        if (c.pick) c.pick();
+        else this.dialog = null; // "Leave"
+      }
+    }
+  }
+
+  private openMerchant(n: Npc): void {
+    const stock = n.stock ?? [];
+    const build = (cursor: number): void => {
+      const choices: NpcDialog['choices'] = stock.map((s) => {
+        const def = ITEMS[s.item];
+        const owned =
+          (def.kind === 'weapon' && def.weapon!.tier <= this.inventory.weaponStats.tier) ||
+          (s.item === 'bow' && this.inventory.hasBow);
+        const soldOut = s.stock <= 0;
+        const poor = this.inventory.gold < s.price;
+        const label = owned
+          ? `${def.name} - owned`
+          : soldOut
+            ? `${def.name} - sold out`
+            : `${def.name}  ${s.price}g  x${s.stock}`;
+        return {
+          label,
+          dim: owned || soldOut || poor,
+          pick: () => {
+            if (owned || soldOut) return;
+            if (poor) {
+              this.hud.push('Not enough gold.');
+              return;
+            }
+            this.inventory.gold -= s.price;
+            s.stock--;
+            this.inventory.add(s.item);
+            if (def.kind === 'consumable') this.hotbar.autoAssign({ kind: 'item', id: s.item });
+            this.hud.push(`Bought: ${def.name}.`);
+            this.audio.play('coin');
+            build(this.dialog?.cursor ?? 0); // refresh stock counts and affordability
+          },
+        };
+      });
+      choices.push({ label: 'Leave', pick: null });
+      this.dialog = {
+        title: `${FRIENDLY_NAMES.merchant} - "Coin talks, hero."`,
+        lines: [`Your gold: ${this.inventory.gold}`],
+        choices,
+        cursor: Math.min(cursor, choices.length - 1),
+      };
+    };
+    build(0);
+  }
+
+  private openPriest(): void {
+    this.dialog = {
+      title: FRIENDLY_NAMES.priest,
+      lines: [
+        '"The chaos gnaws at you, wanderer."',
+        '"Order can still be bought - in coin."',
+      ],
+      choices: [
+        {
+          label: `Cleansing rites  ${PRIEST_PRICE}g  (-${PRIEST_CLEANSE} corruption)`,
+          dim: this.inventory.gold < PRIEST_PRICE,
+          pick: () => {
+            if (this.inventory.gold < PRIEST_PRICE) {
+              this.hud.push('Not enough gold.');
+              return;
+            }
+            this.inventory.gold -= PRIEST_PRICE;
+            cleanse(this.corruption, PRIEST_CLEANSE * this.fx.purityMult);
+            this.hud.push("The priest's chant scours the rot away.");
+            this.audio.play('potion');
+            this.flashT = 0.25;
+            this.flashColor = '#40e0d0';
+            this.dialog = null;
+          },
+        },
+        { label: 'Leave', pick: null },
+      ],
+      cursor: 0,
+    };
+  }
+
+  private openHermit(n: Npc): void {
+    const lines = [`"${n.hint ?? '...'}"`];
+    if (!n.giftGiven) {
+      n.giftGiven = true;
+      const gift = hermitGift(this.rng);
+      this.inventory.gold += gift;
+      lines.push(`The hermit presses ${gift} gold into your palm.`);
+      this.audio.play('coin');
+    }
+    this.dialog = {
+      title: FRIENDLY_NAMES.hermit,
+      lines,
+      choices: [{ label: 'Leave', pick: null }],
+      cursor: 0,
+    };
+  }
+
+  private openQuestgiver(): void {
+    const title = FRIENDLY_NAMES.questgiver;
+    if (this.questActive) {
+      const q = this.questActive;
+      const done = this.kills - q.killsAtAccept;
+      if (done >= q.def.targetKills) {
+        const reward = q.def.rewardItem ? ITEMS[q.def.rewardItem] : null;
+        this.dialog = {
+          title,
+          lines: ['"Well fought! The land breathes easier."'],
+          choices: [
+            {
+              label: `Collect reward: ${q.def.rewardGold}g${reward ? ` + ${reward.name}` : ''}`,
+              pick: () => {
+                this.inventory.gold += q.def.rewardGold;
+                if (q.def.rewardItem) {
+                  this.inventory.add(q.def.rewardItem);
+                  if (ITEMS[q.def.rewardItem].kind === 'consumable') {
+                    this.hotbar.autoAssign({ kind: 'item', id: q.def.rewardItem });
+                  }
+                }
+                this.questActive = null;
+                this.questNotified = false;
+                this.questIdx++;
+                this.hud.push(`Reward claimed: ${q.def.rewardGold} gold.`);
+                this.audio.play('quest');
+                this.dialog = null;
+              },
+            },
+            { label: 'Leave', pick: null },
+          ],
+          cursor: 0,
+        };
+      } else {
+        this.dialog = {
+          title,
+          lines: [`"Not done yet? ${done}/${q.def.targetKills} beasts slain."`],
+          choices: [{ label: 'Leave', pick: null }],
+          cursor: 0,
+        };
+      }
+      return;
+    }
+    const def = QUESTS[this.questIdx];
+    if (!def) {
+      this.dialog = {
+        title,
+        lines: ['"The land owes you more than it can pay, hero."'],
+        choices: [{ label: 'Leave', pick: null }],
+        cursor: 0,
+      };
+      return;
+    }
+    const reward = def.rewardItem ? ITEMS[def.rewardItem] : null;
+    this.dialog = {
+      title,
+      lines: [
+        '"The beasts multiply while the Gate stands."',
+        `"${def.description}, and ${def.rewardGold} gold is yours."`,
+        ...(reward ? [`"...and my spare ${reward.name}."`] : []),
+      ],
+      choices: [
+        {
+          label: `Accept: ${def.description}`,
+          pick: () => {
+            this.questActive = { def, killsAtAccept: this.kills };
+            this.questNotified = false;
+            this.hud.push(`Quest accepted: ${def.description}.`);
+            this.audio.play('quest');
+            this.dialog = null;
+          },
+        },
+        { label: 'Not now', pick: null },
+      ],
+      cursor: 0,
+    };
   }
 
   private villageOf(tx: number, ty: number): 'home' | 'far' | null {
@@ -1119,7 +1409,14 @@ export class PlayScene implements Scene, World {
 
     for (const n of this.npcs) {
       const near = Math.hypot(n.x - this.player.x, n.y - this.player.y) < 30;
-      r.drawNpc(n, this.fog, this.floor.w, near);
+      let marker: string | null = null;
+      if (n.kind === 'questgiver') {
+        const ready =
+          this.questActive &&
+          this.kills - this.questActive.killsAtAccept >= this.questActive.def.targetKills;
+        if (ready || (!this.questActive && this.questIdx < QUESTS.length)) marker = '!';
+      }
+      r.drawNpc(n, this.fog, this.floor.w, near, marker, this.time);
     }
 
     // bombs on the ground
@@ -1162,14 +1459,35 @@ export class PlayScene implements Scene, World {
     r.drawCorruptionVignette(this.corruption.points, this.time);
     if (this.flashT > 0) r.flashScreen(this.flashColor, Math.min(0.5, this.flashT * 2));
 
+    const questView = this.questActive
+      ? {
+          desc: this.questActive.def.description,
+          done: Math.min(
+            this.kills - this.questActive.killsAtAccept,
+            this.questActive.def.targetKills,
+          ),
+          target: this.questActive.def.targetKills,
+          ready:
+            this.kills - this.questActive.killsAtAccept >= this.questActive.def.targetKills,
+        }
+      : null;
     this.hud.render(
       ctx, r.atlas, this.player, this.corruption, this.locationLabel(),
       this.inventory, this.spellbook, this.hotbar, this.progression, this.time,
-      this.contextHint,
+      this.contextHint, questView,
     );
 
     if (this.window.open) {
       this.window.render(ctx, r.atlas, this.inventory, this.spellbook, this.hotbar);
+    }
+
+    if (this.dialog) {
+      drawDialogPanel(ctx, {
+        title: this.dialog.title,
+        lines: this.dialog.lines,
+        entries: this.dialog.choices.map((c) => ({ label: c.label, dim: c.dim })),
+        cursor: this.dialog.cursor,
+      });
     }
   }
 }

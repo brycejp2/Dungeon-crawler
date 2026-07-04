@@ -96,6 +96,7 @@ export class Inventory {
   hasKey = false;
   hasBow = false;
   arrows = 0;
+  gold = 0;
   private counts = new Map<ItemId, number>();
 
   get weaponStats(): WeaponStats {

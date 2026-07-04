@@ -32,7 +32,8 @@ export interface Projectile {
 }
 
 export interface Pickup {
-  item: ItemId;
+  item: ItemId | null; // null = a pile of gold
+  gold?: number; // amount, when item is null
   x: number; // top-left, px
   y: number;
   dead: boolean;

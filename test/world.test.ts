@@ -81,6 +81,37 @@ describe('generateWorld across 20 seeds', () => {
     }
   });
 
+  it('each village keeps a merchant; the captain holds the home square', () => {
+    for (const w of worlds) {
+      const dist = reachableFrom(w);
+      const specials = w.npcSpawns.filter((n) => n.kind !== 'villager');
+      expect(specials.filter((n) => n.village === 'home' && n.kind === 'merchant')).toHaveLength(1);
+      expect(specials.filter((n) => n.village === 'far' && n.kind === 'merchant')).toHaveLength(1);
+      expect(specials.filter((n) => n.kind === 'questgiver')).toHaveLength(1);
+      expect(specials.find((n) => n.kind === 'questgiver')!.village).toBe('home');
+      for (const n of specials) {
+        expect(dist[n.y * w.w + n.x], `${n.kind} reachable`).toBeGreaterThanOrEqual(0);
+      }
+    }
+  });
+
+  it('the castle holds a captive merchant and plundered gold', () => {
+    for (const w of worlds) {
+      const inCastle = (x: number, y: number): boolean =>
+        x >= w.castle.x && x < w.castle.x + w.castle.w &&
+        y >= w.castle.y && y < w.castle.y + w.castle.h;
+      const captive = w.npcSpawns.find((n) => n.village === 'castle');
+      expect(captive).toBeDefined();
+      expect(captive!.kind).toBe('merchant');
+      expect(inCastle(captive!.x, captive!.y)).toBe(true);
+      expect(w.goldSpawns.length).toBeGreaterThanOrEqual(1);
+      for (const g of w.goldSpawns) {
+        expect(g.amount).toBeGreaterThan(0);
+        expect(inCastle(g.x, g.y)).toBe(true);
+      }
+    }
+  });
+
   it('the Gate is ringed by chaos-touched land', () => {
     for (const w of worlds) {
       let corrupt = 0;
